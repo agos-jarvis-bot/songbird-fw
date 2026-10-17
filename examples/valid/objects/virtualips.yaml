@@ -1,0 +1,26 @@
+apiVersion: config.songbird-fw.com/v1alpha1
+kind: VirtualIP
+metadata:
+  name: vip-nginx-https
+  comment: Public web server
+spec:
+  externalInterface: wan
+  externalAddress: 78.25.11.42
+  mappedAddress: 192.168.0.20
+  portForwarding:
+    protocol: tcp
+    externalPort: 443
+    mappedPort: 443
+---
+apiVersion: config.songbird-fw.com/v1alpha1
+kind: VirtualIP
+metadata:
+  name: vip-k8s-api
+spec:
+  externalInterface: wan
+  externalAddress: interface     # follows the WAN address even if dynamic
+  mappedAddress: 192.168.0.25
+  portForwarding:
+    protocol: tcp
+    externalPort: 6443
+    mappedPort: 6443

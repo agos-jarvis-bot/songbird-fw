@@ -1,0 +1,67 @@
+apiVersion: config.songbird-fw.com/v1alpha1
+kind: Address
+metadata:
+  name: lan1-subnet
+  comment: Office subnet
+  color: blue
+spec:
+  interface: lan1
+  subnet: 192.168.0.0/24
+---
+apiVersion: config.songbird-fw.com/v1alpha1
+kind: Address
+metadata:
+  name: lan2-subnet
+spec:
+  interface: lan2
+  subnet: 192.168.2.0/24
+---
+apiVersion: config.songbird-fw.com/v1alpha1
+kind: Address
+metadata:
+  name: printers
+spec:
+  interface: lan2
+  range:
+    start: 192.168.2.1
+    end: 192.168.2.10
+---
+apiVersion: config.songbird-fw.com/v1alpha1
+kind: Address
+metadata:
+  name: google
+spec:
+  fqdn: www.google.com
+---
+apiVersion: config.songbird-fw.com/v1alpha1
+kind: Address
+metadata:
+  name: win-pc
+  comment: Agos' workstation
+spec:
+  mac: "34:29:8f:74:f4:6a"
+---
+apiVersion: config.songbird-fw.com/v1alpha1
+kind: Address
+metadata:
+  name: nginx
+spec:
+  interface: lan1
+  subnet: 192.168.0.20/32
+---
+apiVersion: config.songbird-fw.com/v1alpha1
+kind: Address
+metadata:
+  name: k8s-api
+  color: k8s-blue
+spec:
+  interface: lan1
+  subnet: 192.168.0.25/32
+---
+apiVersion: config.songbird-fw.com/v1alpha1
+kind: AddressGroup
+metadata:
+  name: grp-lan
+  color: green
+spec:
+  members: [lan1-subnet, printers]

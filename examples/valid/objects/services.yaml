@@ -1,0 +1,61 @@
+apiVersion: config.songbird-fw.com/v1alpha1
+kind: Service
+metadata:
+  name: http
+  category: internet
+spec:
+  protocols:
+    - { protocol: tcp, port: 80 }
+---
+apiVersion: config.songbird-fw.com/v1alpha1
+kind: Service
+metadata:
+  name: https
+  category: internet
+spec:
+  protocols:
+    - { protocol: tcp, port: 443 }
+    - { protocol: udp, port: 443 }   # HTTP/3
+---
+apiVersion: config.songbird-fw.com/v1alpha1
+kind: Service
+metadata:
+  name: dns
+spec:
+  protocols:
+    - { protocol: tcp, port: 53 }
+    - { protocol: udp, port: 53 }
+---
+apiVersion: config.songbird-fw.com/v1alpha1
+kind: Service
+metadata:
+  name: k8s
+spec:
+  protocols:
+    - { protocol: tcp, port: 6443 }
+---
+apiVersion: config.songbird-fw.com/v1alpha1
+kind: Service
+metadata:
+  name: ping
+spec:
+  protocols:
+    - { protocol: icmp, icmpType: 8 }
+    - { protocol: icmpv6, icmpType: 128 }
+---
+apiVersion: config.songbird-fw.com/v1alpha1
+kind: Service
+metadata:
+  name: rtp
+spec:
+  protocols:
+    - { protocol: udp, port: 10000-20000 }
+---
+apiVersion: config.songbird-fw.com/v1alpha1
+kind: ServiceGroup
+metadata:
+  name: web
+  category: internet
+  color: green
+spec:
+  members: [http, https]

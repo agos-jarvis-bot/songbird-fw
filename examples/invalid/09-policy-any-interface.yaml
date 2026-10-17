@@ -1,0 +1,7 @@
+apiVersion: config.songbird-fw.com/v1alpha1
+kind: PolicySet
+metadata: {name: p}
+spec:
+  from: any
+  to: wan
+  policies: []

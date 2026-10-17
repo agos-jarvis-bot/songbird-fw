@@ -1,0 +1,16 @@
+apiVersion: config.songbird-fw.com/v1alpha1
+kind: Zone
+metadata:
+  name: internal
+  color: green
+spec:
+  interfaces: [lan1, lan2]
+  intraZoneTraffic: deny
+---
+apiVersion: config.songbird-fw.com/v1alpha1
+kind: Zone
+metadata:
+  name: untrusted
+  color: orange
+spec:
+  interfaces: [wan]
