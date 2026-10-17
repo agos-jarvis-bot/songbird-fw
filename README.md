@@ -1,8 +1,23 @@
-# Architecture Decision Records
+# songbird-architecture
+
+Architectural design of Songbird. Requirements live in `songbird-requirements-analysis`; the configuration schema in `songbird-yaml-schema`.
+
+## Documents
+
+| Document | Content |
+|---|---|
+| [domain-model.md](domain-model.md) | Configuration objects, relationships and constraints (`DM-NN`) |
+| [components.md](components.md) | Component view, interfaces, dependency rules, requirement matrix |
+| [reconciliation.md](reconciliation.md) | Reconciliation loop: desired state → validate → compile → apply → observe → status |
+| [dataplane.md](dataplane.md) | eBPF Data Plane design |
+| [high-lvl-architecture.md](high-lvl-architecture.md) | First high-level sketch (superseded by `components.md`) |
+| Deployment view | *To be written* |
+
+## Architecture Decision Records
 
 One file per decision. A record is never deleted: when a decision changes, a new ADR supersedes it and the old one gets the status *Superseded by ADR-NNNN*.
 
-## Index
+### Index
 
 | ADR | Title | Status |
 |---|---|---|
@@ -16,7 +31,7 @@ One file per decision. A record is never deleted: when a decision changes, a new
 | [0008](adr/0008-schema-versioning-and-rollback.md) | Configuration schema versioning, migration and rollback | Proposed |
 | [0009](adr/0009-secrets-encryption-key.md) | Protection and location of the secrets encryption key | Proposed |
 
-## Candidate ADRs (not written yet)
+### Candidate ADRs (not written yet)
 
 - Validation both in the API and in the Reconciler (decided, see components.md).
 - Optimistic locking for concurrent edits (proposed in components.md).
@@ -25,11 +40,11 @@ One file per decision. A record is never deleted: when a decision changes, a new
 - Distribution mechanism: Hadron image upgraded in place, or a custom ISO.
 - Retroactive records for choices already made: Go, `cilium/ebpf`, Hadron, CRD-style YAML.
 
-## Statuses
+### Statuses
 
 *Proposed* → *Accepted* → (*Deprecated* | *Superseded by ADR-NNNN*). *Rejected* for proposals that were not taken.
 
-## Template
+### Template
 
 ```markdown
 # ADR-NNNN: <decision, stated as a sentence>
