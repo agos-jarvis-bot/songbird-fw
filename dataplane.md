@@ -1,180 +1,358 @@
-# Songbird – Data plane eBPF v2 (design esplorativo)
+# Data Plane — Songbird (eBPF)
 
-> Stato: **bozza per discussione**. Sostituisce il modello del `PoC-basic-xdp-firewall`.
-> Requisiti principali coperti: RGFM1, RGFM2, RGFM3, RGFM5, RGFM6, RGFM10–14, RGFM16, RGFM26, RGFM33, RGFS20.7, RGFS33.1, RGFN36, RGFM39.
-
-## 1. Limiti del PoC attuale
-
-| Problema | Effetto |
+| | |
 |---|---|
-| Scansione lineare di 256 regole con `#pragma unroll` | Costo O(N) per **ogni** pacchetto, limite rigido a 256 regole, programma enorme per il verifier |
-| Nessun conntrack | Le risposte (es. SYN-ACK in ingresso) vanno ammesse con regole esplicite, quindi il firewall non è stateful |
-| Solo IPv4, `iph` assunto di 20 byte | IPv6 passa sempre (`XDP_PASS`), opzioni IPv4 (IHL>5) leggono porte errate |
-| Nessun parsing VLAN 802.1Q | Il traffico taggato passa senza filtro |
-| Frammenti IPv4 non gestiti | I frammenti non iniziali hanno "porte" casuali |
-| `bpf_perf_event_output` per ogni pacchetto | Sotto flood il canale eventi satura la CPU; RGFM26 chiede ring buffer |
-| Tutto ciò che non è IPv4 riceve `XDP_PASS` | ARP/NDP funzionano solo perché IPv6 non viene filtrato; quando si filtra IPv6, NDP va ammesso esplicitamente (RGFM5) |
-| Aggiornamento regole elemento per elemento | Durante il sync il pacchetto può vedere metà vecchia e metà nuova policy (viola RGFS20.7) |
-| `main_test.go` usa `RuleKey`/`RuleValue` inesistenti | Il test non compila |
+| Version | 3.0-draft |
+| Status | Draft for team review |
+| Supersedes | `dataplane.md` v2 (Italian, exploratory, RGFM-style identifiers) |
+| Inputs | Requirements Analysis v2.0.1-draft, Domain Model v0.3-draft, Component View v0.1-draft |
+| Decisions | [ADR-0002](adr/0002-forwarding-model.md) … [ADR-0007](adr/0007-reference-platform.md) |
 
-## 2. La decisione chiave: chi fa il forwarding
+This document describes the internal design of the **Data Plane**: the eBPF programs and maps that parse, filter, track, translate and forward packets. The Control Plane side (compiling the configuration into maps, applying it, collecting events) is described in `components.md`; the objects being enforced are defined in `domain-model.en.md`.
 
-Vincolo tecnico da tenere presente: **un pacchetto rediretto con `XDP_REDIRECT` non passa dall'hook TC egress** del device di uscita (va direttamente al driver tramite `ndo_xdp_xmit`). Quindi "XDP in ingresso + TC per il NAT" funziona **solo se il forwarding lo fa lo stack del kernel** (o un redirect da TC), non un redirect XDP.
+## Requirements covered
 
-| Opzione | Descrizione | Pro | Contro |
-|---|---|---|---|
-| **A. XDP decide, kernel instrada, TC riscrive** | XDP: parsing, prefiltro, policy, conntrack → `XDP_DROP`/`XDP_PASS`. Kernel: routing statico (FIB via netlink), ARP/NDP, MTU/ICMP. TC: DNAT/SNAT/NAT64 | Semplice, robusto, funziona anche su VLAN/PPPoE/WireGuard; drop a velocità XDP | Il forwarding accettato va alla velocità dello stack (~1–2 Mpps/core) |
-| B. Tutto in XDP | XDP fa anche NAT, `bpf_fib_lookup` e `XDP_REDIRECT` (devmap) | Prestazioni massime | Reimplementare NAT, checksum, MTU, ICMP error, push del tag VLAN; non funziona su `ppp0`/VLAN device; TC serve comunque per il traffico locale |
-| C. TC-centrico (modello Cilium) | XDP solo prefiltro; policy, CT e NAT in TC con `bpf_redirect_neigh` | Un solo punto con `skb` (helper checksum, `bpf_skb_change_proto`) | Si perde il vantaggio di XDP sul drop delle policy |
+| Area | Requirements |
+|---|---|
+| Forwarding | R-001, R-001.1, R-001.2 |
+| NAT | R-002, R-003 |
+| Policies | R-014, R-014.1–R-014.4, R-033, R-046 (Zones) |
+| Stateful filtering | R-045, R-045.1, R-045.2 (proposed) |
+| Apply and lifecycle | R-020.6, R-033.1, R-036, R-036.1, R-054 (proposed) |
+| Events | R-026, R-026.1 |
+| Security | R-039 (enforcement), R-053 (proposed) |
+| Performance | R-047, R-048, R-049 (proposed, targets to be agreed) |
+| Constraint | C-001 |
+| **Deferred** (IPv6) | R-001.3, R-001.4, R-005, R-006, R-006.1, R-006.2 |
 
-**Raccomandazione: opzione A come base, con un fast path XDP opzionale (B) per i flussi established senza NAT tra NIC fisiche, in una fase successiva.**
+## Changes since v2
 
-Motivo pratico per Songbird: una WAN in PPPoE (comune su FTTH) o una VLAN non supporta XDP nativo, mentre TC funziona su qualunque netdevice. Il NAT verso la WAN deve quindi stare in TC.
+- Identifiers aligned with RA v2 (`R-NNN`, `C-NNN`); document translated to English.
+- **Zones** are directed Interface pairs (domain model): the classifier first selects the Zone, then classifies only among that Zone's Policies. Five match dimensions become four, and bitmaps are per Zone.
+- **IPv6 is deferred**: an explicit interim policy drops IPv6 instead of passing it (§5).
+- New **local-in** path for traffic addressed to the firewall itself (`allowAccess`, active services) and **local-out** path for traffic the firewall originates (§6).
+- **Virtual IP matching**: a DNAT'ed packet matches only Policies that reference its VIP (§7.4).
+- Each map generation carries the **commit id** it was compiled from, so the Control Plane knows what is applied after a restart (§8).
+- Events carry `policy_gen`, so the matched Policy can be named even after reordering (§11).
+- The six open questions of v2 are now ADR-0002 … ADR-0007.
 
-## 3. Pipeline
+## 1. Scope
+
+**The Data Plane does**: parse packets; enforce Policies, Default Deny and administrative access; track Flows; apply DNAT and SNAT; emit Flow Events and counters.
+
+**It does not**: read YAML, know object names, run DHCP or DNS, route (the kernel does, see §3), persist anything.
+
+**Contract with the Control Plane** (owned by the Dataplane Driver, see `components.md`):
+
+| Direction | Mechanism |
+|---|---|
+| Configuration down | Generational maps (§8), filled from the Compiler's `Plan` |
+| Topology down | Interface maps: logical Interface ids, local addresses, egress addresses for masquerade (§4, §6) |
+| Events up | Ring buffer (§11) |
+| Counters up | Per-CPU arrays read by the Observer (§11) |
+| Applied state up | Generation header (§8) |
+
+## 2. Limits of the PoC (`PoC-basic-xdp-firewall`)
+
+| Problem | Effect | Addressed in |
+|---|---|---|
+| Linear scan of 256 rules with `#pragma unroll` | O(N) per packet, hard limit of 256 rules, very large program for the verifier | §7 |
+| No connection tracking | Replies need explicit rules; the filter is not stateful | §9 |
+| IPv4 only, header assumed 20 bytes | IPv6 always passes; IPv4 options (IHL>5) give wrong ports | §4, §5 |
+| No 802.1Q parsing | Tagged traffic passes unfiltered | §4 |
+| IPv4 fragments not handled | Non-initial fragments have random "ports" | §4, ADR-0005 |
+| `bpf_perf_event_output` per packet | Event channel saturates the CPU under flood | §11 |
+| Everything that is not IPv4 gets `XDP_PASS` | Unfiltered bypass | §5 |
+| Rule update element by element | A packet can see half old and half new policy (violates R-020.6) | §8 |
+| `main_test.go` uses non-existent `RuleKey`/`RuleValue` | The test does not compile | §13 |
+
+## 3. Forwarding model
+
+Decided in [ADR-0002](adr/0002-forwarding-model.md): **XDP decides, the kernel forwards, TC rewrites.**
+
+The key technical constraint: a packet redirected with `XDP_REDIRECT` **does not traverse the TC egress hook** of the egress device (it goes to the driver via `ndo_xdp_xmit`). "XDP on ingress + TC for NAT" therefore works only if forwarding is done by the kernel stack.
+
+- **XDP** (ingress, physical NIC): parsing, prefilter, connection tracking, Policy decision → `XDP_DROP` or `XDP_PASS`.
+- **Kernel**: routing (static routes installed by the Network Driver via netlink), ARP, MTU and ICMP errors, local sockets.
+- **TC** (ingress and egress, any netdevice including VLAN and `ppp0`): DNAT, reverse SNAT, SNAT, local-out tracking.
+
+A fast path with `XDP_REDIRECT` for established Flows without NAT between physical NICs is deferred until the benchmark shows it is needed (R-047).
+
+The kernel's own netfilter rule engines are not used (C-001). The Network Driver sets the required sysctls (`ip_forward`, `rp_filter`, …).
+
+## 4. Pipeline
 
 ```mermaid
 flowchart LR
-    NIC[NIC fisica] --> XDP
+    NIC[Physical NIC] --> P
 
-    subgraph XDP["XDP ingress (NIC fisica)"]
-        P[Parse L2/L3/L4<br/>VLAN, v4/v6, ext hdr, frag] --> PF[Prefiltro<br/>blocklist LPM, bogon]
-        PF --> RN[Lookup NAT inverso<br/>tuple reale, senza riscrivere]
+    subgraph XDP["XDP ingress (physical NIC)"]
+        P["Parse L2/L3/L4<br/>VLAN, PPPoE, IPv4, fragments"] --> V6{IPv6?}
+        V6 -- yes --> D6["XDP_DROP<br/>ipv6-unsupported"]
+        V6 -- no --> CTL{"ARP or DHCP<br/>to firewall?"}
+        CTL -- yes --> PASS
+        CTL -- no --> PF["Prefilter<br/>threat-intel blocklist"]
+        PF --> RN["Reverse NAT lookup<br/>real tuple, no rewrite"]
         RN --> CT{CT lookup}
-        CT -- established/related --> OK[XDP_PASS + metadata]
-        CT -- new --> DN[Lookup DNAT<br/>dst post-DNAT]
-        DN --> FIB[bpf_fib_lookup<br/>→ interfaccia/zona uscita]
-        FIB --> POL[Classificatore policy<br/>bitmap]
-        POL -- accept --> NEW[Crea CT] --> OK
-        POL -- drop / default deny --> DROP[XDP_DROP + evento]
+        CT -- "established / related" --> PASS["XDP_PASS + metadata"]
+        CT -- new --> DN{"DNAT lookup<br/>ingress if, proto, addr, port"}
+        DN -- hit --> FIB
+        DN -- miss --> LOC{"Destination is a<br/>firewall address?"}
+        LOC -- yes --> LI["Local-in check<br/>allowAccess, active services"]
+        LI -- allow --> NEWL[Create CT] --> PASS
+        LI -- deny --> DROP
+        LOC -- no --> FIB["bpf_fib_lookup<br/>post-DNAT destination"]
+        FIB --> Z{"Zone lookup<br/>in if, out if"}
+        Z -- none --> DROP["XDP_DROP + event"]
+        Z -- found --> POL["Classifier<br/>per-Zone bitmaps"]
+        POL -- accept --> NEW[Create CT] --> PASS
+        POL -- "drop / default deny" --> DROP
     end
 
-    OK --> TCI[TC ingress<br/>riscrittura DNAT / reverse SNAT / NAT64]
-    TCI --> K[Stack kernel<br/>routing, ARP/NDP, servizi locali]
-    K --> TCE[TC egress<br/>SNAT masquerade, allocazione porte]
-    TCE --> OUT[Interfaccia uscita<br/>anche VLAN / ppp0]
+    PASS --> TCI["TC ingress<br/>DNAT, reverse SNAT"]
+    TCI --> K["Kernel stack<br/>routing, ARP, local sockets"]
+    K --> TCE["TC egress<br/>SNAT masquerade,<br/>local-out CT entry"]
+    TCE --> OUT["Egress Interface<br/>also VLAN / ppp0"]
 ```
 
-XDP passa la decisione (id flusso, flag NAT) a TC tramite **metadata XDP** (`bpf_xdp_adjust_meta` → `skb->data_meta`). In questo modo TC non ripete i lookup.
+XDP passes its decision (Flow id, NAT flags, VIP id) to TC through **XDP metadata** (`bpf_xdp_adjust_meta` → `skb->data_meta`), so TC does not repeat the lookups.
 
-## 4. Parsing
+The DNAT lookup comes **before** the local-address check because a Virtual IP's external address is usually an address of the firewall (DM-19): a packet to `WAN-IP:80` with a VIP is translated, not delivered locally.
 
-- **VLAN**: XDP va agganciato all'**interfaccia fisica**. Le sub-interfacce VLAN supportano solo XDP generico. Bisogna leggere fino a 2 tag (802.1Q / 802.1ad). Con l'offload `rxvlan` attivo il tag viene rimosso dalla NIC e non è visibile nel pacchetto: va disattivato (`ethtool -K <if> rxvlan off`) oppure letto con il kfunc `bpf_xdp_metadata_rx_vlan_tag` (kernel ≥ 6.8, dipende dal driver).
-- **Interfaccia logica**: map `{ifindex fisico, vlan_id} → ifindex logico`, mantenuta dal control plane via netlink.
-- **IPv4**: usare `ihl*4`. Frammenti: il primo frammento viene valutato; i non iniziali si associano al primo tramite una map `frag {saddr, daddr, id, proto} → verdetto` (LRU, TTL breve). Alternativa più semplice: drop dei frammenti non iniziali senza stato, come scelta di policy.
-- **IPv6**: ciclo limitato (es. 6 iterazioni) sugli extension header (Hop-by-Hop, Routing, Fragment, Dest Options). AH ed ESP terminano il parsing L4.
-- **Sempre ammessi (prima della policy)**: ARP, ICMPv6 NDP/RS/RA (tipi 133–137) con hop limit 255, e i DHCP/DHCPv6 diretti al firewall se il servizio è attivo. Senza questa eccezione la default deny (RGFM33) rompe IPv6 (RGFM5) e SLAAC (RGFM4).
-- **Indirizzi**: un'unica rappresentazione a 128 bit; IPv4 mappato come `::ffff:a.b.c.d`. Policy, CT e NAT usano un solo formato di chiave e NAT64 (RGFM6) diventa una semplice traduzione tra famiglie.
+## 5. Parsing
 
-## 5. Classificatore di policy (lookup LPM/hash)
+- **VLAN**: XDP is attached to the **physical Interface**; VLAN sub-interfaces support only generic XDP. Up to two tags are read (802.1Q / 802.1ad). With `rxvlan` offload active the NIC strips the tag: disable it (`ethtool -K <if> rxvlan off`) or read it with the kfunc `bpf_xdp_metadata_rx_vlan_tag` (kernel ≥ 6.8, driver-dependent).
+- **Logical Interfaces**: map `{physical ifindex, vlan id} → logical Interface id`, maintained by the Network Driver. All later lookups use the logical id.
+- **PPPoE** (WAN on FTTH): session frames (ethertype `0x8864`) are parsed to the inner IPv4 header, and `{physical ifindex, session id} → logical id` (`ppp0`). Whether XDP metadata reaches TC on `ppp0` is **not verified**; the fallback is to classify PPPoE traffic in TC ingress on `ppp0` (see §15, ADR-0007).
+- **IPv4**: header length from `ihl * 4`. Non-initial fragments follow [ADR-0005](adr/0005-ipv4-fragments.md): dropped and counted when forwarded; passed to the kernel for reassembly, rate-limited, when addressed to the firewall itself.
+- **IPv6 (interim)**: the Ethertype is recognised and the packet is **dropped and counted** with reason `ipv6-unsupported`. It is never passed, because passing would forward it unfiltered. When IPv6 is designed, this rule is replaced by the full parser (extension headers, NDP exceptions required by R-005).
+- **Always allowed before any Policy**: ARP; DHCP requests (UDP 67) on Interfaces where the DHCP server is active.
+- **Address representation**: one 128-bit format; IPv4 mapped as `::ffff:a.b.c.d`. Kept although IPv6 is deferred, so that adding IPv6 does not change the layout of keys.
 
-Le regole RGFM14 hanno 5 dimensioni: zona/interfaccia di ingresso, zona/interfaccia di uscita, sorgente, destinazione, servizio. Una singola chiave hash non basta, perché wildcard, CIDR e gruppi si combinano tra loro. Lo schema proposto è la **classificazione a bit-vector**, lo stesso approccio di Polycube/pcn-iptables:
+## 6. Traffic classes
 
-1. Le regole vengono ordinate per priorità in Go: **indice di regola = posizione del bit**.
-2. Per ogni dimensione, un lookup O(1) o O(log) restituisce una **bitmap** delle regole compatibili con quel campo.
-3. `match = in_zone & out_zone & src & dst & svc` (con `MAX_RULES=1024` sono 16 parole u64).
-4. La **prima regola che corrisponde è il primo bit a 1**. BPF non ha un'istruzione `ctz`: si implementa con 6 passi di shift o con una tabella de Bruijn.
-5. Se non c'è nessun bit a 1 si applica la **default deny** (RGFM33).
-
-| Dimensione | Struttura BPF | Note di precalcolo (Go) |
+| Class | Definition | Decided by |
 |---|---|---|
-| Sorgente / destinazione | `LPM_TRIE` chiave `{prefixlen, addr[16]}` → bitmap | La LPM restituisce **solo** il prefisso più lungo, quindi la bitmap di ogni prefisso deve contenere anche le regole dei prefissi che lo includono. C'è sempre una voce `::/0` con le regole "any". I range (RGFM12) vengono scomposti in CIDR. Un gruppo (RGFM13) è l'unione dei suoi elementi |
-| Servizio | `ARRAY[65536]` per protocollo (TCP/UDP) → `u16 port_class`, poi `ARRAY[class]` → bitmap | Classi di equivalenza: le porte che compaiono nello stesso insieme di regole condividono la classe. Occupa circa 128 KB per protocollo e supporta range e Service Group (RGFM10/11). ICMP usa la stessa tecnica su `type` |
-| Zona in / out | `HASH ifindex logico → zone_id`, `ARRAY[zone]` → bitmap | La zona di uscita si ricava da `bpf_fib_lookup` sulla destinazione **post-DNAT** |
+| **Forwarded** | Enters an Interface, leaves another | Zone + Policies (§7), Default Deny |
+| **Local-in** | Addressed to an address of the firewall, not matched by a VIP | `allowAccess` and active services of the ingress Interface |
+| **Local-out** | Originated by the firewall (DNS upstream queries, Git push, ACME, alerting) | Always allowed; tracked so that replies are accepted |
+| **Control** | ARP, DHCP to the firewall | Always allowed (§5) |
 
-Costo per pacchetto **nuovo**: circa 6 lookup più un AND su 16 parole, **indipendente dal numero di regole** fino a `MAX_RULES`. I pacchetti dei flussi established non passano dal classificatore (§6).
+### 6.1 Local-in
 
-### Aggiornamento atomico (RGFS20.7)
-Le map dei dati sono `ARRAY_OF_MAPS` / `HASH_OF_MAPS` con **2 generazioni**, e una variabile globale `active_gen` indica quella in uso. Go costruisce la generazione inattiva, la verifica e poi cambia `active_gen` con una sola scrittura. Il programma legge `active_gen` una volta per pacchetto, quindi vede sempre una policy coerente. Il rollback consiste nel tornare alla generazione precedente.
-
-## 6. Conntrack
-
-### Implementazione propria o kfunc del kernel?
-
-| | **CT proprio in map BPF** (modello Cilium) | kfunc netfilter (`bpf_xdp_ct_lookup`, `bpf_ct_insert_entry`, `bpf_ct_set_nat_info`) |
-|---|---|---|
-| Dipendenze | Nessuna | `nf_conntrack`: zona grigia rispetto a RGFM16 ("bypass iptables/nftables") |
-| Prestazioni | Lookup hash diretto | Overhead più alto, allocazione nel kernel |
-| TCP window tracking, ALG (FTP/SIP) | Da implementare (in forma semplificata) | Già disponibili |
-| Sync HA (RGFC23) | Da implementare in Go | `conntrackd` già esistente |
-| Controllo e osservabilità | Totale | Tramite `conntrack -L`, ma la semantica è del kernel |
-
-**Raccomandazione: CT proprio.** È coerente con RGFM16 e prevedibile nelle prestazioni. L'HA è "Could" e si può risolvere in seguito.
-
-### Strutture
+The Compiler produces, per logical Interface:
 
 ```c
-struct ct_key {               // 40 byte
+struct local_in_cfg {
+    __u8  allow_ping;        // allowAccess contains ping
+    __u8  allow_https;       // allowAccess contains https
+    __u8  dhcp_active;       // DHCP server enabled on this Interface
+    __u8  dns_active;        // DNS service listening on this Interface
+};
+```
+
+The configuration used is the one of the **Interface that owns the targeted address** (FortiGate semantics), found through `local_addrs`, not the one of the Interface the packet arrives on. A new local-in Flow is accepted if, for that owner Interface:
+
+1. ICMP echo request and `allow_ping`;
+2. TCP to the management port (443) and `allow_https`;
+3. UDP 67 and `dhcp_active`, or UDP/TCP 53 and `dns_active` (domain-model constraint DM-34);
+
+otherwise it is dropped with reason `local-in-deny` and a rate-limited event. Replies to local-out Flows are matched earlier by the CT lookup.
+
+Example: with `https` allowed on LAN and not on WAN, a LAN client reaches the UI on the LAN address but not on the WAN address. A packet that arrives on one Interface and targets the address of another is judged by the owner's configuration; see the safeguard in §15.
+
+`local_addrs` is a hash `{address} → owner Interface`, maintained by the Network Driver.
+
+### 6.2 Local-out
+
+XDP sees only ingress, so locally originated Flows must be tracked on egress. The TC egress program, on a packet with no CT entry and a local source address, creates a CT entry pair with flag `LOCAL_OUT` and no Policy evaluation. The reply arriving on the WAN then matches the CT in XDP. Without this, the DNS forwarder, GitOps Sync, ACME and Alerting would see their replies dropped by Default Deny.
+
+SNAT is not applied to local-out Flows: their source is already an Interface address.
+
+## 7. Policy classifier
+
+### 7.1 Zone selection
+
+```
+zone_id = zones[{in_logical_if, out_logical_if}]
+```
+
+The output Interface comes from `bpf_fib_lookup` on the **post-DNAT** destination. No entry → Default Deny (reason `no-zone`). Since a Zone has exactly two distinct Interfaces (DM-06) and there is no `any`, this is a single exact-match lookup.
+
+### 7.2 Bit-vector classification within the Zone
+
+Same approach as Polycube / pcn-iptables, now per Zone:
+
+1. The Compiler orders the Zone's enabled Policies (disabled ones are omitted): **Policy index within the Zone = bit position**.
+2. For each dimension, one lookup returns a **bitmap** of the Policies compatible with that field.
+3. `match = src & dst & svc` (with `MAX_RULES_PER_ZONE = 1024`, 16 `u64` words; value in [ADR-0006](adr/0006-capacity-limits.md)).
+4. The **first set bit** is the first matching Policy (R-014.4). BPF has no `ctz`: implemented with 6 shift steps or a de Bruijn table.
+5. No bit set → **Default Deny** (R-033).
+
+| Dimension | BPF structure | Precomputation (Go) |
+|---|---|---|
+| Source / destination | `LPM_TRIE`, key `{prefixlen, zone_id, addr[16]}` → bitmap. The `zone_id` is part of the prefix, so one trie serves all Zones | LPM returns only the longest prefix, so each prefix's bitmap also contains the Policies of the prefixes that include it. Address `all` is the IPv4 entry `::ffff:0:0/96`. Ranges are decomposed into CIDRs; groups are the union of their members; InterfaceAddresses is resolved to the Interface's subnets |
+| Destination via VIP | `ARRAY[vip_id]` → bitmap (per Zone) | See §7.4 |
+| Service | `ARRAY[65536]` per protocol (TCP, UDP) → `u16 port_class`, then `ARRAY[zone][class]` → bitmap | Equivalence classes computed over **all** Policies, so the 64 K arrays are shared by every Zone; ICMP uses the same technique on `type`; `any` sets the bit for every class |
+
+Cost per **new** Flow: about 5 lookups and an AND on 16 words, independent of the number of Policies up to the per-Zone limit. Established Flows skip the classifier (§9).
+
+### 7.3 Address types not supported in the Data Plane
+
+| Type | Why | Status |
+|---|---|---|
+| `fqdn` | Needs DNS resolution and map updates whenever the answer changes | Requires a Control Plane resolver feeding the LPM; **not designed** (§15) |
+| `mac` | Needs an L2 dimension; meaningful only on a directly connected segment | **Not designed** (§15) |
+
+Until designed, the Validator should reject them in Policies.
+
+### 7.4 Virtual IP matching
+
+A packet translated by VIP `k` matches **only** the Policies whose destinations include VIP `k`; a non-translated packet matches only the non-VIP destinations:
+
+```
+dst_bits = dnat_hit ? vip_bits[zone][k] : lpm_dst(zone, daddr)
+```
+
+Without this rule, a Policy with destination `all` would also accept DNAT'ed traffic, and a Policy referencing the VIP's mapped address would accept traffic that reached the internal server without going through the VIP. The Service dimension is evaluated on the **post-DNAT** port (§15).
+
+## 8. Atomic update and applied state
+
+Configuration maps are `ARRAY_OF_MAPS` / `HASH_OF_MAPS` with **two generations**; a global variable `active_gen` selects the one in use. The Dataplane Driver builds the inactive generation, verifies it, then switches `active_gen` with a single write. The program reads `active_gen` once per packet, so it always sees a coherent configuration. Rollback switches back (R-020.6).
+
+**Generational** (configuration): zones, classifier maps, VIP/DNAT, local-in configuration, egress addresses, blocklist.
+**Not generational** (state): CT, SNAT reverse table, counters, ring buffer.
+
+Each generation carries a header:
+
+```c
+struct gen_header {
+    __u32 gen;            // monotonically increasing
+    __u32 plan_version;   // layout version of the compiled plan
+    __u8  commit_id[32];  // Git commit compiled into this generation (SHA-1 zero-padded or SHA-256)
+    __u64 applied_ns;
+};
+```
+
+After a Control Plane restart the Dataplane Driver reads the active header and reports the applied commit to the Reconciler, which compares it with `HEAD` and applies only if they differ (R-033.1).
+
+## 9. Connection tracking
+
+Decided in [ADR-0003](adr/0003-own-conntrack.md): **own conntrack in BPF maps**, no `nf_conntrack`.
+
+```c
+struct ct_key {               // 40 bytes
     __u8  saddr[16], daddr[16];
-    __be16 sport, dport;      // per ICMP: id + type
+    __be16 sport, dport;      // ICMP: id + type
     __u8  proto, pad[3];
 };
 
-struct ct_entry {
+struct ct_entry {             // 96 bytes
     __u64 last_seen_ns;
-    __u64 packets, bytes;     // per direzione: due entry
-    __u32 rule_id, policy_gen;
-    __u16 flags;              // DIR_REPLY, SEEN_REPLY, NAT_SNAT, NAT_DNAT, LOG
+    __u64 packets, bytes;     // per direction
+    __u32 policy_gen;         // generation that accepted the Flow
+    __u16 rule_idx;           // Policy index within the Zone
+    __u16 zone_id;
+    __u16 flags;              // DIR_REPLY, SEEN_REPLY, SNAT, DNAT, LOCAL_IN, LOCAL_OUT
     __u8  tcp_state;          // SYN_SENT, SYN_RECV, ESTABLISHED, FIN_WAIT, CLOSE
-    __u8  zone_in, zone_out;
-    __u8  nat_addr[16];       // indirizzo tradotto da applicare in TC
+    __u8  pad;
+    __u16 vip_id;
     __be16 nat_port;
+    __u8  nat_addr[16];       // translated address applied in TC
+    struct ct_key peer;       // key of the other direction
 };
 ```
 
-- Map `LRU_HASH` con **due entry per flusso** (ORIG e REPLY). Il pacchetto di ritorno viene trovato con un lookup diretto, senza normalizzare la tupla.
-- Il **pacchetto di ritorno è accettato dallo stato** del CT, senza rivalutare la policy: è questo che rende il firewall stateful.
-- **RELATED**: per gli ICMP/ICMPv6 di errore (dest-unreachable, packet-too-big, time-exceeded) si legge l'header interno e si cerca la tupla invertita nel CT. Senza questo si rompe il Path MTU Discovery.
-- **Timeout** (configurabili): SYN 30 s, TCP established 3600 s, FIN/RST 10 s, UDP 60 s (180 s se bidirezionale), ICMP 30 s.
-- **Scadenza**: controllo pigro durante il lookup (`now - last_seen > timeout` → flusso nuovo) più uno sweep periodico in Go, che emette anche l'evento di chiusura sessione con i contatori.
-- **Protezione da SYN flood**: una LRU unica permetterebbe a un SYN flood di espellere i flussi established. Le entry in `SYN_SENT` vanno quindi in una **map separata più piccola**; il flusso passa a `ct_main` solo alla prima risposta. In seguito si può aggiungere un SYN-proxy XDP (vedi `xdp_synproxy` nei sample del kernel).
-- **Cambio policy**: ogni entry registra `policy_gen`. Quando cambia la policy, i flussi con generazione vecchia vengono rivalutati al pacchetto successivo (re-classify) e chiusi se non più ammessi. Il comportamento va deciso (§10).
+- `LRU_HASH` with **two entries per Flow** (ORIG and REPLY): a reply is found with a direct lookup, without normalising the tuple. `peer` allows re-classification and deletion of both entries from either direction.
+- **Stateful** (R-045): a reply is accepted by CT state without re-evaluating Policies.
+- **RELATED** (R-045.1): for ICMP errors (dest-unreachable, frag-needed, time-exceeded) the embedded header is read and the inverted tuple is looked up. Without it Path MTU Discovery breaks.
+- **Timeouts** (R-045.2, configurable): TCP handshake 30 s, established 3600 s, closing 10 s; UDP 60 s (180 s bidirectional); ICMP 30 s.
+- **Expiry**: lazy check at lookup (`now - last_seen > timeout` → new Flow) plus a periodic sweep in the Dataplane Driver, which also emits `FLOW_END` with counters.
+- **SYN flood protection**: entries in `SYN_SENT` live in a **separate, smaller map**; the Flow moves to the main map at the first reply. A SYN proxy in XDP can be added later.
+- **Policy change** ([ADR-0004](adr/0004-active-flows-on-policy-change.md), R-054): at the next packet of a Flow whose `policy_gen` differs from the active generation, the ORIG tuple is re-classified. If it is still accepted, `policy_gen` and `rule_idx` are updated; otherwise the packet is dropped, both entries are deleted and `FLOW_END` is emitted with reason `policy-change`. Local-in Flows are re-checked against the new local-in configuration the same way.
 
-## 7. NAT (TC)
+## 10. NAT (TC)
 
-Regola generale: **XDP legge, TC scrive**. XDP consulta le map NAT per conoscere la tupla "reale" e decidere; tutte le riscritture dei pacchetti avvengono in TC, dove `bpf_l3_csum_replace`/`bpf_l4_csum_replace` gestiscono correttamente anche il checksum offload.
+General rule: **XDP reads, TC writes.** XDP consults the NAT maps to know the real tuple and decide; every packet rewrite happens in TC, where `bpf_l3_csum_replace` / `bpf_l4_csum_replace` also handle checksum offload correctly.
 
-| Funzione | Hook | Meccanismo |
+| Function | Hook | Mechanism |
 |---|---|---|
-| **DNAT / port forwarding** (RGFM3) | TC ingress | `dnat_rules HASH {proto, daddr, dport} → {new_addr, new_port}`. La policy viene valutata sulla **destinazione post-DNAT**, come fanno FortiGate (VIP) e nftables |
-| **SNAT / masquerade** (RGFM2) | TC egress dell'interfaccia di uscita | All'arrivo del primo pacchetto: porta casuale nel range (es. 32768–60999) e inserimento con `BPF_NOEXIST` in `snat_rev` con al massimo N tentativi (stesso schema di Cilium). Se lo spazio porte è esaurito → drop + contatore + evento |
-| **Reverse SNAT** | Lookup in XDP, riscrittura in TC ingress | `snat_rev {tupla post-SNAT} → tupla originale` |
-| **NAT64** (RGFM6/7/8) | TC | `bpf_skb_change_proto()` (v6↔v4), prefisso configurabile in una variabile globale (default `64:ff9b::/96`). DNS64 (RGFM18.6) resta nel control plane |
+| **DNAT** via Virtual IP (R-003) | Lookup in XDP, rewrite in TC ingress | `dnat HASH {ingress logical if, proto, daddr, dport} → {vip_id, mapped addr, mapped port}`. Port ranges are expanded into one entry per port, up to the limit in ADR-0006; a range external→single mapped port maps all to the same port (DM-20) |
+| **SNAT / masquerade** (R-002) | TC egress of the output Interface | Applied when the matched Policy has `nat.mode = interface` (flag stored in CT). Source = primary address of the output Interface (`egress_addr` map). First packet: random port in a range (e.g. 32768–60999) inserted with `BPF_NOEXIST` into `snat_rev`, at most N attempts (same scheme as Cilium). Port space exhausted → drop + counter + event `nat-exhausted` |
+| **Reverse SNAT** | Lookup in XDP, rewrite in TC ingress | `snat_rev {post-SNAT tuple} → original tuple` |
+| **NAT with IpPool** | — | Not designed (domain model allows it; RA has no requirement yet) |
+| **NAT64** | — | Deferred with IPv6 |
 
-## 8. Eventi e osservabilità (RGFM26, RGFS27.4, RGNM27.6)
+## 11. Events and counters
 
-- `BPF_MAP_TYPE_RINGBUF` (es. 4–16 MB) al posto del perf buffer.
-- Eventi **per flusso, non per pacchetto**: `FLOW_NEW` (accept, con regola), `FLOW_DROP`, `FLOW_END` (dallo sweep in Go, con byte e pacchetti). In questo modo sono rispettati sia RGFM26 sia il carico.
-- **Rate limit dei drop** (token bucket per CPU o per regola): sotto DDoS non si genera un evento per ogni pacchetto scartato. I drop vengono comunque contati, e se `bpf_ringbuf_reserve` fallisce si incrementa un contatore `events_lost`.
-- Contatori `PERCPU_ARRAY` per regola (pacchetti/byte/hit) e per motivo di drop (malformato, blocklist, default deny, NAT esaurito…). Alimentano `/health` (RGFS32) e i grafici.
-- La pseudonimizzazione degli IP (RGFN37) avviene in Go prima della scrittura su disco, non in BPF.
+- `BPF_MAP_TYPE_RINGBUF` (size in ADR-0006) instead of the perf buffer.
+- Events are **per Flow, not per packet** (R-026):
 
-## 9. Ciclo di vita, robustezza e test
+```c
+struct flow_event {
+    __u64 ts_ns;
+    __u8  saddr[16], daddr[16];
+    __be16 sport, dport;
+    __u8  proto;
+    __u8  type;          // FLOW_NEW, FLOW_DROP (from XDP); FLOW_END (from the sweep)
+    __u8  verdict;       // accept, drop
+    __u8  reason;        // see below
+    __u32 in_if;         // logical Interface id
+    __u16 zone_id;
+    __u16 rule_idx;
+    __u32 policy_gen;    // with zone_id and rule_idx, identifies the Policy
+    __u64 packets, bytes;// FLOW_END only
+};
+```
 
-- **Map e link pinnati** in `/sys/fs/bpf/songbird/`. Se il processo Go va in crash il data plane continua a filtrare con l'ultima policy; al riavvio Go si ricollega alle map pinnate (RGFS33.1). Su Hadron bpffs è in memoria, quindi dopo un reboot si riparte dallo YAML.
-- **Hot reload** (RGFN36): `link.Update()` sul `bpf_link` XDP/TCX sostituisce il programma in modo atomico, senza detach e senza perdita di pacchetti. Le map con schema invariato vengono riusate. Se il layout di `ct_key`/`ct_entry` cambia serve una migrazione: le struct devono avere un campo versione.
-- **Toolchain**: aggiornare `cilium/ebpf` (oggi alla 0.11) e usare `bpf2go`, che genera le struct Go dal C e rende superflue le struct e le conversioni di endianness scritte a mano. Attach TC con **TCX** (`link.AttachTCX`, kernel ≥ 6.6). La versione del kernel di Hadron va verificata.
-- **Test**:
-  - unit test con `BPF_PROG_TEST_RUN` (`prog.Run()`): pacchetti costruiti in Go (gopacket) e verifica di verdetto e riscritture. Non serve una NIC, servono solo CAP_BPF/root;
-  - test di integrazione con netns + veth (client – songbird – server), DNAT/SNAT verificati con traffico reale;
-  - benchmark con `pktgen`/TRex per i target di prestazione, che vanno ancora aggiunti ai requisiti.
+- **Matched Policy identifier**: the Event Collector translates `(policy_gen, zone_id, rule_idx)` into `(Zone name, Policy name)` using the name table of that generation. The Control Plane keeps the tables of the current and the previous generations long enough for in-flight events.
+- **Reasons**: `policy`, `default-deny`, `no-zone`, `local-in`, `local-in-deny`, `blocklist`, `malformed`, `fragment`, `ipv6-unsupported`, `nat-exhausted`, `policy-change`.
+- **Rate limiting** (R-026.1): token bucket per CPU for drop events; drops are always counted; if `bpf_ringbuf_reserve` fails, `events_lost` is incremented.
+- **Counters**: `PERCPU_ARRAY` per Policy (packets, bytes, hits) and per drop reason. They feed `/health`, `/metrics` and the charts (R-032, R-051).
+- **Pseudonymisation** (R-037) is applied in Go by the Event Collector before writing to disk, not in BPF.
 
-## 10. Piano incrementale
+## 12. Lifecycle and robustness
 
-| Fase | Contenuto | Verifica |
+- **Pinned maps and links** in `/sys/fs/bpf/songbird/`. If the Control Plane crashes, the Data Plane keeps enforcing the last configuration; at restart the Dataplane Driver reattaches to the pinned objects and reads the generation header (§8). bpffs is in memory, so after a reboot everything is rebuilt from `HEAD` (after schema migration, ADR-0008).
+- **Hot reload** (R-036, R-036.1): `link.Update()` on the XDP/TCX `bpf_link` replaces the program atomically, without detach or packet loss. Maps with unchanged layout are reused. If `ct_key` / `ct_entry` change, a migration is needed: the layout is versioned through `plan_version`.
+- **Attachment**: the Dataplane Driver attaches XDP to every physical Interface present at startup and to new ones on netlink events, so no physical Interface bypasses the filter.
+- **Toolchain**: current `cilium/ebpf` with `bpf2go`, which generates the Go structs from C and removes hand-written structs and endianness conversions. TC attach with **TCX** (`link.AttachTCX`, kernel ≥ 6.6). The kernel version of the target OS must be verified (ADR-0007).
+- **Embedding**: the eBPF objects are embedded in the single Go binary (`go:embed`), consistent with C-004 and with an image that ships only that binary.
+
+## 13. Testing
+
+- **Unit** (`T-U`): `BPF_PROG_TEST_RUN` (`prog.Run()`) with packets built in Go (gopacket): verdict, rewrites, events. No NIC needed, only `CAP_BPF`/root.
+- **Equivalence** (`T-U`, R-014.4): fuzzing that compares the eBPF classifier with a reference classifier in Go on random configurations and packets.
+- **Integration** (`T-I`): network namespaces with veth (client – songbird – server): stateful TCP/UDP, PMTUD, DNAT, SNAT, local-in, local-out, policy change.
+- **Performance** (`T-P`): `pktgen` / TRex on the reference platform (ADR-0007) for R-047, R-048, R-049.
+
+## 14. Incremental plan
+
+| Phase | Content | Verification |
 |---|---|---|
-| 0 | Struttura del progetto: `bpf2go`, `cilium/ebpf` aggiornato, harness `PROG_TEST_RUN` | Test che compilano e girano in CI |
-| 1 | Parser completo (VLAN, v4 con IHL, v6 con ext header, frammenti, eccezioni NDP/ARP) | Suite di pacchetti malformati e ai limiti |
-| 2 | Classificatore bitmap + compilatore Go "regole YAML → map" + swap di generazione | Test di equivalenza con un classificatore di riferimento in Go (fuzzing) |
-| 3 | Conntrack (TCP/UDP/ICMP, RELATED, timeout, sweep, eventi ringbuf) | netns: TCP/UDP stateful, PMTUD |
-| 4 | DNAT + SNAT in TC | netns: port forwarding e masquerade verso "Internet" simulata |
-| 5 | NAT64 e fast path XDP per i flussi established (opzione B) | Benchmark |
+| 0 | Project structure: `bpf2go`, current `cilium/ebpf`, `PROG_TEST_RUN` harness; fix the PoC test | Tests compile and run in CI |
+| 1 | Parser: VLAN, IPv4 with IHL, fragments (ADR-0005), interim IPv6 drop, ARP/DHCP exceptions | Malformed and boundary packet suite |
+| 2 | Zone lookup, per-Zone bitmap classifier, Go compiler "Plan → maps", generation swap with header | Equivalence fuzzing against the Go reference classifier |
+| 3 | Conntrack (TCP/UDP/ICMP, RELATED, timeouts, sweep, ring-buffer events), local-in, local-out, policy change | netns: stateful TCP/UDP, PMTUD, UI reachable only where allowed, DNS forwarder works |
+| 4 | DNAT with VIP matching, SNAT masquerade in TC | netns: port forwarding and masquerade towards a simulated Internet |
+| 5 | PPPoE path; benchmark; fast path XDP only if needed | Benchmark against R-047 |
+| later | IPv6, NDP, NAT64, `fqdn` and `mac` Addresses, IpPool | — |
 
-## 11. Domande aperte
+## 15. Open questions
 
-1. **Forwarding**: si accetta l'opzione A (forwarding via stack kernel) per la prima release, oppure esiste un target di throughput che richiede subito il fast path XDP?
-2. **Conntrack proprio o nf_conntrack**: RGFM16 esclude anche `nf_conntrack` o solo iptables/nftables?
-3. **Cambio policy**: le sessioni attive che una nuova policy non permette più vanno chiuse subito (comportamento FortiGate di default) o lasciate scadere?
-4. **Frammenti IPv4**: tracking o drop dei frammenti non iniziali?
-5. **Limiti**: valori obiettivo per `MAX_RULES` (1024? 4096?), numero di sessioni concorrenti (es. 1M = circa 200 MB di CT) e pps.
-6. **Hardware di riferimento**: driver NIC con XDP nativo (i40e/ice/mlx5/ixgbe) e uso di PPPoE sulla WAN.
+1. **Cross-interface access to local addresses**: with the owner rule, a packet arriving on the WAN but addressed to the LAN address of the firewall is accepted if the LAN allows `https`. On the Internet such a packet is rarely routable, but an on-link attacker (the upstream router) can send it. Proposed safeguard: accept a local-in Flow only if the ingress Interface owns the address, or if the ingress Interface is not `role: wan`. To be decided.
+2. **Management port**: fixed 443, or configurable? If a VIP uses the same external address and port while `https` is allowed on that Interface, one of them must win: proposed DM-35 rejects the collision.
+3. **Service on DNAT'ed traffic**: matched on the post-DNAT port (current design) or on the original port?
+4. **`fqdn` and `mac` Addresses**: design them, or remove them from the first release?
+5. **DNAT port ranges**: is expansion with a cap acceptable, or is a range structure needed?
+6. **XDP metadata support** on the reference NIC drivers, and whether it survives to TC on VLAN and `ppp0` devices.
+7. **Local-out detection** in TC egress: confirm the technique (no CT entry + local source address) against edge cases such as forwarded packets with spoofed local sources, which XDP must have dropped first.
+8. **Performance of the forwarding model**: the stack forwards about 1–2 Mpps per core, close to the R-047 target of 1 Mpps per core with 1 000 Policies. To be measured before ADR-0002 is accepted.
+
+## 16. Impact on other documents
+
+| Document | Change |
+|---|---|
+| Domain model | DM-34 (active services open their ports on the Interface), DM-35 (VIP must not collide with the management port), DM-36 (per-Zone Policy limit) |
+| RA | Interim IPv6 behaviour (drop, counted) while R-001.3/R-001.4 are deferred; requirement for administrative access per Interface; Default Deny also for traffic with no Zone |
+| components.md | Dataplane Driver owns the CT sweep (emits `FLOW_END`) and reports the applied commit from the generation header |
