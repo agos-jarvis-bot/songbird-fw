@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Version | 0.1-draft |
-| Inputs | Requirements Analysis v2.0.1-draft, Domain Model v0.3-draft, `dataplane.md` |
+| Inputs | Requirements Analysis v2.0.1-draft, Domain Model v0.4-draft, `dataplane.md`; the loop itself is detailed in `reconciliation.md` |
 | Scope | Components, responsibilities, interfaces, dependency rules, requirement traceability |
 | Not covered here | Deployment on Hadron (separate `deployment.md`), internal design of the eBPF Data Plane (`dataplane.md`) |
 
@@ -129,7 +129,7 @@ Informal contracts. Signatures belong to the Detailed Design.
 | **Compiler** | Compiler | Reconciler | `Compile(tree, runtimeFacts)` returns a `Plan` with one section per subsystem (dataplane, network, DHCP, DNS). Deterministic. |
 | **Applier** | Applier | Reconciler | `Apply(plan)` returns *applied* or *rolled back with reason*. |
 | **Driver** | Dataplane Driver, Network Driver, DHCP Service, DNS Service | Applier | `Snapshot()` of current state; `Prepare(section)` validates and stages with no visible effect; `Commit()`; `Rollback()`. |
-| **ReconcilerStatus** | Reconciler | Observer, API | Desired commit, applied commit, state (*idle, applying, failed*), last error. |
+| **ReconcilerStatus** | Reconciler | Observer, API | Desired commit, applied commit, state (*starting, reconciling, in-sync, failed, degraded*), last error, per-driver status. See `reconciliation.md` §9. |
 | **StatusProvider** | Drivers, services, Event Collector | Observer | `Status()` returns *running / degraded / stopped* plus details (R-032). |
 | **AuditSink** | Audit Log | Config Manager, Auth, API | `Record(actor, action, before, after, source address)`. |
 | **Alerting** | Alerting | Observer, GitOps Sync, Certificate Manager | `Raise(condition, severity, details)`. |

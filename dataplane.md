@@ -5,10 +5,10 @@
 | Version | 3.0-draft |
 | Status | Draft for team review |
 | Supersedes | `dataplane.md` v2 (Italian, exploratory, RGFM-style identifiers) |
-| Inputs | Requirements Analysis v2.0.1-draft, Domain Model v0.3-draft, Component View v0.1-draft |
+| Inputs | Requirements Analysis v2.0.1-draft, Domain Model v0.4-draft, Component View v0.1-draft, `reconciliation.md` |
 | Decisions | [ADR-0002](adr/0002-forwarding-model.md) … [ADR-0007](adr/0007-reference-platform.md) |
 
-This document describes the internal design of the **Data Plane**: the eBPF programs and maps that parse, filter, track, translate and forward packets. The Control Plane side (compiling the configuration into maps, applying it, collecting events) is described in `components.md`; the objects being enforced are defined in `domain-model.en.md`.
+This document describes the internal design of the **Data Plane**: the eBPF programs and maps that parse, filter, track, translate and forward packets. The Control Plane side (compiling the configuration into maps, applying it, collecting events) is described in `components.md`; the objects being enforced are defined in `domain-model.md`; how and when maps are applied is in `reconciliation.md`.
 
 ## Requirements covered
 
