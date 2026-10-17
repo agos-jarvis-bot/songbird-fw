@@ -1,8 +1,8 @@
-apiVersion: config.songbird-fw.com/v1alpha1
-kind: PolicySet
-metadata: {name: p}
+apiVersion: "config.songbird-fw.com/v1alpha1"
+kind: "RuleSet"
+metadata: { name: "p" }
 spec:
-  from: lan
-  to: wan
-  policies:
-    - {name: x, source: [nope], destination: [any], service: [any], action: accept}
+  from: "lan"
+  to: "wan"
+  rules:
+    - { name: "x", source: ["nope"], destination: ["any"], service: ["any"], action: "accept" }

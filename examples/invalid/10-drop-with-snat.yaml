@@ -1,8 +1,0 @@
-apiVersion: config.songbird-fw.com/v1alpha1
-kind: PolicySet
-metadata: {name: p}
-spec:
-  from: lan
-  to: wan
-  policies:
-    - {name: x, source: [any], destination: [any], service: [any], action: drop, snat: {enabled: true}}

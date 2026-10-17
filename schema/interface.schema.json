@@ -32,6 +32,12 @@
           "enum": ["internal", "external", "dmz", "transit"],
           "default": "internal"
         },
+        "allowAccess": {
+          "description": "Services of the firewall itself reachable on this Interface (FortiGate: allowaccess). Empty = none. 'https' is the management UI (further restricted by System.spec.admin.trustedHosts).",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "enum": ["https", "ping", "dns", "dhcp", "ntp"] }
+        },
         "ipv4": { "$ref": "#/$defs/ipv4Config" },
         "ipv6": { "$ref": "#/$defs/ipv6Config" }
       },

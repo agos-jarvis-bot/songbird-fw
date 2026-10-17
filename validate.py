@@ -17,11 +17,11 @@ import json
 
 SCHEMA_DIR = pathlib.Path(__file__).parent / "schema"
 
-ADDRESS_NS = {"Address", "AddressGroup", "VirtualIP"}
+ADDRESS_NS = {"Address", "AddressGroup"}
 SERVICE_NS = {"Service", "ServiceGroup"}
 NETWORK_NS = {"Interface", "Zone"}
 NAMESPACE_OF = ({k: "address" for k in ADDRESS_NS} | {k: "service" for k in SERVICE_NS}
-                | {k: "network" for k in NETWORK_NS} | {"PolicySet": "policy", "Color": "color"})
+                | {k: "network" for k in NETWORK_NS} | {"RuleSet": "ruleset", "Color": "color", "System": "system"})
 
 # Shipped palette: name -> hex. A Color with predefined: true must keep this hex (users annotate, not repaint).
 PREDEFINED_PALETTE = {
@@ -68,13 +68,6 @@ def _cidr(s):
     return ipaddress.ip_network(s, strict=False)
 
 
-def _port_span(v):
-    if isinstance(v, int):
-        return 1
-    a, b = map(int, v.split("-"))
-    return b - a + 1
-
-
 def semantic(objs, errors):
     err = lambda o, rule, msg: errors.append(f"{o.where()} {rule}: {msg}")
 
@@ -111,7 +104,7 @@ def semantic(objs, errors):
             if exp is None:
                 err(o, "predefined-unknown", f"'{o.name}' is marked predefined but is not in the shipped palette {sorted(PREDEFINED_PALETTE)}")
             elif exp.lower() != h:
-                err(o, "predefined-hex", f"predefined colour '{o.name}' must keep hex {exp}; annotate 'meaning' instead, or define a new Color")
+                err(o, "predefined-hex", f"predefined colour '{o.name}' must keep hex {exp}; annotate metadata.comment instead, or define a new Color")
         elif o.name in PREDEFINED_PALETTE:
             err(o, "predefined-shadow", f"'{o.name}' is a predefined colour name; set predefined: true or choose another name")
 
@@ -210,22 +203,35 @@ def semantic(objs, errors):
     check_group("AddressGroup", addr, {"Address", "AddressGroup"})
     check_group("ServiceGroup", svc, {"Service", "ServiceGroup"})
 
-    # --- VirtualIP
-    for o in objs:
-        if o.kind != "VirtualIP":
-            continue
-        ref(o, net, o.spec["externalInterface"], "spec.externalInterface")
-        pf = o.spec.get("portForwarding")
-        if pf and _port_span(pf["externalPort"]) != _port_span(pf["mappedPort"]):
-            err(o, "vip-port-span", "externalPort and mappedPort ranges must have the same size")
-        ea = o.spec["externalAddress"]
-        if ea != "interface" and ipaddress.ip_address(ea).version != ipaddress.ip_address(o.spec["mappedAddress"]).version:
-            err(o, "vip-family", "externalAddress and mappedAddress must be the same IP family (NAT64 is not done via VirtualIP)")
+    # --- System: singleton, references
+    systems = [o for o in objs if o.kind == "System"]
+    if len(systems) > 1:
+        for o in systems[1:]:
+            err(o, "system-singleton", f"only one System object is allowed; first defined at {systems[0].where()}")
+    for o in systems:
+        adm = o.spec.get("admin") or {}
+        for a in adm.get("trustedHosts", []):
+            ref(o, addr, a, "spec.admin.trustedHosts[]", {"Address", "AddressGroup"})
+        for sec in ("ntp", "dns"):
+            for i in (o.spec.get(sec) or {}).get("serveToInterfaces", []):
+                ref(o, net, i, f"spec.{sec}.serveToInterfaces[]")
+        for i in ((o.spec.get("logging") or {}).get("anonymizeSourceIp") or {}).get("interfaces", []):
+            ref(o, net, i, "spec.logging.anonymizeSourceIp.interfaces[]", {"Interface"})
+        dns = o.spec.get("dns") or {}
+        if dns.get("dns64") and not (o.spec.get("nat64") or {}).get("enabled"):
+            err(o, "dns64-without-nat64", "spec.dns.dns64 requires spec.nat64.enabled: true")
+        if dns.get("mode") == "recursive" and "upstreams" in dns:
+            err(o, "recursive-upstreams", "spec.dns.upstreams is meaningless in recursive mode")
 
-    # --- PolicySet
+    def single_host(a):
+        if "subnet" in a.spec:
+            n = _cidr(a.spec["subnet"]); return n.num_addresses == 1
+        return "range" in a.spec
+
+    # --- RuleSet
     pairs = {}
     for o in objs:
-        if o.kind != "PolicySet":
+        if o.kind != "RuleSet":
             continue
         f, t = o.spec["from"], o.spec["to"]
         ref(o, net, f, "spec.from")
@@ -233,31 +239,60 @@ def semantic(objs, errors):
         if f == t and net.get(f) and net[f].kind == "Interface":
             err(o, "same-interface", "from and to cannot be the same Interface (use a Zone for intra-zone traffic)")
         if (f, t) in pairs:
-            err(o, "duplicate-pair", f"PolicySet for ({f} -> {t}) already defined by {pairs[(f, t)].name}")
+            err(o, "duplicate-pair", f"RuleSet for ({f} -> {t}) already defined by {pairs[(f, t)].name}")
         pairs[(f, t)] = o
         names = set()
-        for i, p in enumerate(o.spec["policies"]):
-            fld = f"spec.policies[{i}]"
-            if p["name"] in names:
-                err(o, "duplicate-policy", f"{fld}: policy name '{p['name']}' repeated in this PolicySet")
-            names.add(p["name"])
+        for i, r in enumerate(o.spec["rules"]):
+            fld = f"spec.rules[{i}]"
+            if r["name"] in names:
+                err(o, "duplicate-rule", f"{fld}: rule name '{r['name']}' repeated in this RuleSet")
+            names.add(r["name"])
             for side in ("source", "destination"):
-                for a in p[side]:
+                for a in r[side]:
                     if a == "any":
                         continue
                     tgt = ref(o, addr, a, f"{fld}.{side}[]", ADDRESS_NS)
-                    if tgt and tgt.kind == "VirtualIP":
-                        if side == "source":
-                            err(o, "vip-as-source", f"{fld}: VirtualIP '{a}' cannot be a source")
-                        elif p["action"] != "accept":
-                            err(o, "vip-drop", f"{fld}: a VirtualIP destination requires action=accept")
-                        elif tgt.spec["externalInterface"] != f and zone_of.get(tgt.spec["externalInterface"]) != f:
-                            err(o, "vip-interface", f"{fld}: VirtualIP '{a}' is bound to '{tgt.spec['externalInterface']}', which is not the incoming side '{f}'")
                     if tgt and tgt.kind == "Address" and "mac" in tgt.spec and side == "destination":
                         err(o, "mac-as-destination", f"{fld}: MAC Address '{a}' can only be used as source")
-            for s in p["service"]:
-                if s != "any":
-                    ref(o, svc, s, f"{fld}.service[]", SERVICE_NS)
+            for sname in r["service"]:
+                if sname != "any":
+                    ref(o, svc, sname, f"{fld}.service[]", SERVICE_NS)
+            nat = r.get("nat")
+            if not nat:
+                continue
+            tip = nat.get("translateIpTo")
+            if tip is not None:
+                a = ref(o, addr, tip, f"{fld}.nat.translateIpTo", {"Address"})
+                if a and ("fqdn" in a.spec or "mac" in a.spec):
+                    err(o, "nat-address-kind", f"{fld}.nat.translateIpTo: '{tip}' must be a subnet or range Address, not fqdn/mac")
+                elif a and nat["type"] == "dnat" and not single_host(a):
+                    err(o, "dnat-single-host", f"{fld}.nat.translateIpTo: '{tip}' must be a single host (/32, /128) or a range")
+            if nat["type"] == "dnat":
+                if r["destination"] == ["any"]:
+                    err(o, "dnat-any-destination", f"{fld}: a dnat rule needs an explicit destination (the public address), not 'any'")
+                tst = nat.get("translateServiceTo")
+                if tst is not None:
+                    if r["service"] == ["any"]:
+                        err(o, "dnat-any-service", f"{fld}: translateServiceTo requires an explicit service, not 'any'")
+                    sv = ref(o, svc, tst, f"{fld}.nat.translateServiceTo", {"Service"})
+                    if sv:
+                        protos = sv.spec["protocols"]
+                        if len(protos) != 1 or protos[0]["protocol"] not in ("tcp", "udp", "sctp") or not isinstance(protos[0].get("port"), int):
+                            err(o, "dnat-service-shape", f"{fld}.nat.translateServiceTo: '{tst}' must have exactly one tcp/udp/sctp entry with a single port")
+                        else:
+                            # protocol of the translated service must appear in the rule's service(s)
+                            rule_protos = set()
+                            for sname in r["service"]:
+                                x = svc.get(sname)
+                                if x and x.kind == "Service":
+                                    rule_protos |= {pe["protocol"] for pe in x.spec["protocols"]}
+                                elif x:  # group: expand one level is enough for the check to be useful
+                                    for m in x.spec["members"]:
+                                        y = svc.get(m)
+                                        if y and y.kind == "Service":
+                                            rule_protos |= {pe["protocol"] for pe in y.spec["protocols"]}
+                            if rule_protos and protos[0]["protocol"] not in rule_protos:
+                                err(o, "dnat-protocol-mismatch", f"{fld}: translateServiceTo uses {protos[0]['protocol']} but the rule's service has {sorted(rule_protos)}")
 
     # --- orphan warnings are out of scope here (would be `songbird lint`)
 

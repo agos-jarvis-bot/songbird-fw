@@ -7,10 +7,11 @@
   "required": ["apiVersion", "kind", "metadata", "spec"],
   "properties": {
     "kind": {
-      "enum": ["Color", "Interface", "Zone", "Address", "AddressGroup", "Service", "ServiceGroup", "VirtualIP", "PolicySet"]
+      "enum": ["System", "Color", "Interface", "Zone", "Address", "AddressGroup", "Service", "ServiceGroup", "RuleSet"]
     }
   },
   "allOf": [
+    { "if": { "properties": { "kind": { "const": "System" } } },       "then": { "$ref": "system.schema.json" } },
     { "if": { "properties": { "kind": { "const": "Color" } } },        "then": { "$ref": "color.schema.json" } },
     { "if": { "properties": { "kind": { "const": "Interface" } } },    "then": { "$ref": "interface.schema.json" } },
     { "if": { "properties": { "kind": { "const": "Zone" } } },         "then": { "$ref": "zone.schema.json" } },
@@ -18,7 +19,6 @@
     { "if": { "properties": { "kind": { "const": "AddressGroup" } } }, "then": { "$ref": "addressgroup.schema.json" } },
     { "if": { "properties": { "kind": { "const": "Service" } } },      "then": { "$ref": "service.schema.json" } },
     { "if": { "properties": { "kind": { "const": "ServiceGroup" } } }, "then": { "$ref": "servicegroup.schema.json" } },
-    { "if": { "properties": { "kind": { "const": "VirtualIP" } } },    "then": { "$ref": "virtualip.schema.json" } },
-    { "if": { "properties": { "kind": { "const": "PolicySet" } } },    "then": { "$ref": "policyset.schema.json" } }
+    { "if": { "properties": { "kind": { "const": "RuleSet" } } },      "then": { "$ref": "ruleset.schema.json" } }
   ]
 }

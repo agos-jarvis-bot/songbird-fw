@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://config.songbird-fw.com/v1alpha1/color.schema.json",
   "title": "Color",
-  "description": "A named colour with a user-assigned meaning, forming the palette used to visually classify objects (e.g. green = Backup/Veeam, blue = main LAN, red = DMZ). Songbird ships a predefined palette (examples/valid/objects/palette.yaml (shipped palette)) whose entries users may annotate via 'meaning' or extend with new Color objects. Other objects reference a Color by name in metadata.color; the reference is checked by the validator. Colors live in their own namespace.",
+  "description": "A named colour forming the palette used to visually classify related objects (RA R-055). What a colour stands for in a given network ('Backup / Veeam', 'main LAN', 'DMZ') is written in metadata.comment, like for every other object. Songbird ships a predefined palette (examples/valid/objects/palette.yaml) whose hex values are fixed; users annotate their comment and add new Color objects. Other objects reference a Color by name in metadata.color; the reference is checked by the validator. Colors live in their own namespace.",
   "type": "object",
   "additionalProperties": false,
   "required": ["apiVersion", "kind", "metadata", "spec"],
@@ -10,7 +10,7 @@
     "apiVersion": { "$ref": "common.schema.json#/$defs/apiVersion" },
     "kind": { "const": "Color" },
     "metadata": {
-      "description": "Color metadata must not itself carry a 'color'.",
+      "description": "A Color cannot itself have a 'color'.",
       "$ref": "common.schema.json#/$defs/metadata",
       "not": { "required": ["color"] }
     },
@@ -20,13 +20,8 @@
       "required": ["hex"],
       "properties": {
         "hex": { "$ref": "common.schema.json#/$defs/colorHex" },
-        "meaning": {
-          "description": "What objects of this colour have in common, shown as a legend in the UI (e.g. 'Backup / Veeam'). Optional for predefined colours that the user has not yet annotated.",
-          "type": "string",
-          "maxLength": 128
-        },
         "predefined": {
-          "description": "True for entries of the shipped palette. Predefined colours may be annotated (meaning) but their 'hex' is fixed; the validator rejects changes to it so the palette stays recognisable across installations.",
+          "description": "True for entries of the shipped palette: their hex is immutable (validator check) so palettes stay recognisable across installations; the comment is free.",
           "type": "boolean",
           "default": false
         }

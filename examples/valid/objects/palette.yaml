@@ -1,67 +1,46 @@
 # Predefined palette shipped with Songbird.
-# Users annotate 'meaning' to document what each colour stands for in THEIR network,
-# and may add their own Color objects below (predefined: false, or omitted).
-apiVersion: config.songbird-fw.com/v1alpha1
-kind: Color
-metadata: { name: green }
-spec:
-  hex: "#2E7D32"
-  predefined: true
-  meaning: Backup / Veeam
+# Users annotate 'comment' to document what each colour stands for in THEIR network,
+# and may add their own Color objects (predefined omitted or false).
+apiVersion: "config.songbird-fw.com/v1alpha1"
+kind: "Color"
+metadata: { name: "green", comment: "Backup / Veeam" }
+spec: { hex: "#2E7D32", predefined: true }
 ---
-apiVersion: config.songbird-fw.com/v1alpha1
-kind: Color
-metadata: { name: blue }
-spec:
-  hex: "#1565C0"
-  predefined: true
-  meaning: Main LAN
+apiVersion: "config.songbird-fw.com/v1alpha1"
+kind: "Color"
+metadata: { name: "blue", comment: "Main LAN" }
+spec: { hex: "#1565C0", predefined: true }
 ---
-apiVersion: config.songbird-fw.com/v1alpha1
-kind: Color
-metadata: { name: red }
-spec:
-  hex: "#C62828"
-  predefined: true
-  meaning: DMZ
+apiVersion: "config.songbird-fw.com/v1alpha1"
+kind: "Color"
+metadata: { name: "red", comment: "DMZ" }
+spec: { hex: "#C62828", predefined: true }
 ---
-apiVersion: config.songbird-fw.com/v1alpha1
-kind: Color
-metadata: { name: orange }
-spec:
-  hex: "#EF6C00"
-  predefined: true
-  meaning: Untrusted / Internet
+apiVersion: "config.songbird-fw.com/v1alpha1"
+kind: "Color"
+metadata: { name: "orange", comment: "Untrusted / Internet" }
+spec: { hex: "#EF6C00", predefined: true }
 ---
-apiVersion: config.songbird-fw.com/v1alpha1
-kind: Color
-metadata: { name: purple }
-spec:
-  hex: "#6A1B9A"
-  predefined: true
-  # not yet annotated by the user
+apiVersion: "config.songbird-fw.com/v1alpha1"
+kind: "Color"
+metadata: { name: "purple" }           # not yet annotated by the user
+spec: { hex: "#6A1B9A", predefined: true }
 ---
-apiVersion: config.songbird-fw.com/v1alpha1
-kind: Color
-metadata: { name: teal }
-spec:
-  hex: "#00838F"
-  predefined: true
+apiVersion: "config.songbird-fw.com/v1alpha1"
+kind: "Color"
+metadata: { name: "teal" }
+spec: { hex: "#00838F", predefined: true }
 ---
-apiVersion: config.songbird-fw.com/v1alpha1
-kind: Color
-metadata: { name: grey }
-spec:
-  hex: "#616161"
-  predefined: true
-  meaning: Default / unclassified
+apiVersion: "config.songbird-fw.com/v1alpha1"
+kind: "Color"
+metadata: { name: "grey", comment: "Default / unclassified" }
+spec: { hex: "#616161", predefined: true }
 ---
 # user-defined colour
-apiVersion: config.songbird-fw.com/v1alpha1
-kind: Color
+apiVersion: "config.songbird-fw.com/v1alpha1"
+kind: "Color"
 metadata:
-  name: k8s-blue
-  comment: Kubernetes brand colour, for cluster nodes and APIs
+  name: "k8s-blue"
+  comment: "Kubernetes cluster (brand colour)"
 spec:
   hex: "#326CE5"
-  meaning: Kubernetes cluster

@@ -114,6 +114,16 @@
       "pattern": "^(?=.{1,253}$)([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,63}\\.?$"
     },
 
+    "fqdnOrLabel": {
+      "description": "A hostname label (e.g. 'fw01') or a full FQDN.",
+      "type": "string",
+      "pattern": "^(?=.{1,253}$)[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$"
+    },
+
+    "fqdnOrIp": {
+      "anyOf": [ { "$ref": "#/$defs/fqdn" }, { "$ref": "#/$defs/ipAddress" } ]
+    },
+
     "port": {
       "type": "integer",
       "minimum": 1,
