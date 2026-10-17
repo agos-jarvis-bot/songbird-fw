@@ -6,15 +6,15 @@ One file per decision. A record is never deleted: when a decision changes, a new
 
 | ADR | Title | Status |
 |---|---|---|
-| [0001](0001-yaml-in-git-source-of-truth.md) | YAML files in Git are the single source of truth for configuration | Accepted |
-| [0002](0002-forwarding-model.md) | Forwarding model: XDP decides, the kernel forwards, TC rewrites | Proposed |
-| [0003](0003-own-conntrack.md) | Own connection tracking in BPF maps, without nf_conntrack | Proposed |
-| [0004](0004-active-flows-on-policy-change.md) | Active Flows no longer permitted are terminated at their next packet | Proposed |
-| [0005](0005-ipv4-fragments.md) | Non-initial IPv4 fragments are dropped when forwarded | Proposed |
-| [0006](0006-capacity-limits.md) | Capacity limits of the Data Plane | Proposed |
-| [0007](0007-reference-platform.md) | Reference platform for development and performance verification | Proposed |
-| [0008](0008-schema-versioning-and-rollback.md) | Configuration schema versioning, migration and rollback | Proposed |
-| [0009](0009-secrets-encryption-key.md) | Protection and location of the secrets encryption key | Proposed |
+| [0001](adr/0001-yaml-in-git-source-of-truth.md) | YAML files in Git are the single source of truth for configuration | Accepted |
+| [0002](adr/0002-forwarding-model.md) | Forwarding model: XDP decides, the kernel forwards, TC rewrites | Proposed |
+| [0003](adr/0003-own-conntrack.md) | Own connection tracking in BPF maps, without nf_conntrack | Proposed |
+| [0004](adr/0004-active-flows-on-policy-change.md) | Active Flows no longer permitted are terminated at their next packet | Proposed |
+| [0005](adr/0005-ipv4-fragments.md) | Non-initial IPv4 fragments are dropped when forwarded | Proposed |
+| [0006](adr/0006-capacity-limits.md) | Capacity limits of the Data Plane | Proposed |
+| [0007](adr/0007-reference-platform.md) | Reference platform for development and performance verification | Proposed |
+| [0008](adr/0008-schema-versioning-and-rollback.md) | Configuration schema versioning, migration and rollback | Proposed |
+| [0009](adr/0009-secrets-encryption-key.md) | Protection and location of the secrets encryption key | Proposed |
 
 ## Candidate ADRs (not written yet)
 
