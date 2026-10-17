@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Version | 0.3-draft |
+| Version | 0.4-draft |
 | Aligned with | Requirements Analysis v2.0.1-draft (with the changes listed in [Impact on the RA](#impact-on-the-ra)) |
 
 Conceptual model of the firewall's **configuration objects**. It describes what exists, how it is connected, and which constraints always hold. It contains no technical details (eBPF, netlink, exact YAML format) and no runtime state (conntrack, leases, sessions).
@@ -17,7 +17,13 @@ The model covers **IPv4 only**. IPv6 and Router Advertisement are deferred (see 
 
 ## Changes
 
-**0.3** (this version)
+**0.4** (this version)
+
+- Three constraints found while aligning the Data Plane design (`dataplane.md` v3): DM-34 (active services open their ports on the Interface), DM-35 (Virtual IP versus management port), DM-36 (per-Zone Policy limit).
+- `fqdn` and `mac` Address types flagged as not yet supported by the Data Plane.
+- `allowAccess` follows the **owner rule**: it applies to the addresses of the Interface, like FortiGate (DM-05).
+
+**0.3**
 
 - IPv6 removed for now: DHCPv6 client/server, Router Advertisement, IPv6 addresses and routes (DM-30, DM-31, DM-32 deferred).
 - **AddressGroup**: all members belong to the group's Interface, or none of them belong to any (DM-16 tightened).
@@ -173,7 +179,7 @@ classDiagram
 | parent | ref Interface | for `vlan` | the physical Interface carrying the 802.1Q tag (DM-03) |
 | vlanId | integer 1–4094 | for `vlan` | |
 | addresses | list of IPv4 address/prefix | yes | primary, secondary and additional subnets |
-| allowAccess | list of enum (ping, https) | no | what may be reached **on the firewall itself** through this Interface; default: none (DM-05) |
+| allowAccess | list of enum (ping, https) | no | what may be reached on the firewall **through the addresses of this Interface**, whatever Interface the packet arrives on; default: none (DM-05) |
 | dhcp | DhcpConfig | no | only `role: lan` |
 
 ### DhcpConfig (composed in Interface)
@@ -242,7 +248,7 @@ Position is **not** an attribute: it is the order in the Zone's list.
 
 | Attribute | Type | Req. | Notes |
 |---|---|---|---|
-| type | enum: ip, range, subnet, fqdn, mac | yes | |
+| type | enum: ip, range, subnet, fqdn, mac | yes | `fqdn` and `mac` are not yet supported by the Data Plane (`dataplane.md` §7.3) |
 | value | depends on type | yes | ip: address; range: start-end; subnet: CIDR; fqdn: name; mac: MAC address |
 | interface | ref Interface | no | if present, restricts where it can be used (DM-12) |
 | builtin | boolean | no | marks predefined objects such as `all` (DM-21) |
@@ -306,7 +312,8 @@ Reserved name `<interface> addresses` (e.g. `LAN addresses`), resolved to the su
 |---|---|
 | DM-03 | `type = vlan` requires `parent` (a `physical` Interface) and `vlanId` ∈ 1–4094; `(parent, vlanId)` is unique. `type = physical` has neither. |
 | DM-04 | Interfaces with IPs in overlapping subnets are rejected. |
-| DM-05 | `allowAccess` contains only `ping` and `https`, without duplicates. Default: empty. `ping` governs ICMP echo only. |
+| DM-05 | `allowAccess` contains only `ping` and `https`, without duplicates. Default: empty. `ping` governs ICMP echo only. It applies to the addresses of the Interface (owner rule), not to the Interface the packet arrives on. |
+| DM-34 | A network service enabled on an Interface implicitly accepts its own ports from that Interface, independently of `allowAccess`: the DHCP server (UDP 67) where `dhcp.enabled`, and the DNS server (UDP/TCP 53) on the Interfaces where it listens, once `DnsConfig` is modelled. `allowAccess` governs only management protocols. |
 
 ### Zones and Policies
 
@@ -320,6 +327,8 @@ Reserved name `<interface> addresses` (e.g. `LAN addresses`), resolved to the su
 | DM-11 | If `destinations` contains a VirtualIP, the Zone's `srcInterface` equals the VirtualIP's `external.interface`. |
 | DM-12 | An Address, AddressGroup or InterfaceAddresses bound to an Interface is usable as a source only in Zones whose `srcInterface` is that Interface, and as a destination only in Zones whose `dstInterface` is that Interface. |
 | DM-13 | With `nat.mode = pool` the reference to an IpPool exists; in the other modes it is absent. |
+| DM-35 | If `https` is in `allowAccess` of an Interface, no VirtualIP on that Interface uses an `external.ip` of the Interface with TCP and an `external.port` that includes the management port (443). |
+| DM-36 | The number of enabled Policies in a Zone does not exceed the per-Zone limit of the Data Plane (ADR-0006). The Validator enforces it, so that an Apply never fails on map size. |
 
 ### Objects
 
