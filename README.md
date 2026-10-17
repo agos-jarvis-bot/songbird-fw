@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Document** | RA – Requirements Analysis |
-| **Version** | 2.0.0-draft |
+| **Version** | 2.0.1-draft |
 | **Status** | Draft for team review |
 | **Supersedes** | `songbird-requirements-analysis/README.md` (v1, RGFM-style identifiers) |
 | **License** | AGPL-3.0 |
@@ -87,6 +87,7 @@ Terms are capitalised in the requirement text when used in the sense defined her
 | **Subsystem** | A major runtime component with its own health status: Data Plane, DHCP, DNS, GitOps, API/UI, Alerting. |
 | **User** | A local administrative account of the appliance. |
 | **Role** | A named set of permissions assigned to Users (e.g. `admin`, `read-only`). |
+| **Colour** | A named palette entry with a fixed colour value and a user-defined meaning, used to visually classify related configuration objects (e.g. "green = Backup"). Every configuration object may reference at most one Colour. |
 | **Initial Setup** | The state of an appliance that boots without a valid Configuration. |
 | **A/B Update** | An update model with two system partitions: the new image is written to the inactive one and activated at reboot; failure rolls back to the previous one. |
 | **Hot Reload** | Replacing a running Data Plane program with a new version without interrupting packet processing. |
@@ -334,6 +335,9 @@ The following requirements are **not** part of v1. They are proposed because the
 | **R-052** | G | F | S | Maintainability | The system shall provide a command-line tool `songbird validate <dir>` that validates a Configuration directory against the Schema and exits non-zero on error, usable in CI pipelines independently of the appliance. | **T-U** – corpus test as R-020.2 through the CLI. |
 | **R-053** | G | F | M | Security | Policies shall be able to drop IPv4 packets that are not initial fragments, as a configurable behaviour (default: drop). | **T-I** – fragmented UDP datagram; with default settings non-initial fragments are dropped and counted. *(Resolves `dataplane.md` open question 4.)* |
 | **R-054** | G | F | S | Security | When a Policy change no longer permits an active Flow, the Flow shall be terminated at its next packet. | **T-I** – long-lived TCP Flow; change Policy to drop; next segment is dropped and a `FLOW_END` event with reason `policy-change` is emitted. *(Resolves `dataplane.md` open question 3; FortiGate default behaviour.)* |
+| **R-055** | U | F | S | Usability | The system shall provide a palette of named Colours, each with a fixed colour value and a user-defined meaning (e.g. "green = Backup/Veeam", "blue = main LAN", "red = DMZ"), and every configuration object shall be assignable to at most one Colour, so that related objects are visually classified consistently across the user interface. | **T-S** – assign the same Colour to an Address, a Service and a Zone; all three render with that colour in every list view; the palette legend shows the Colour with its meaning. **T-U** – validator rejects a reference to an undefined Colour. |
+| R-055.1 | U | F | S | Usability | The system shall ship a predefined palette whose colour values cannot be changed; users shall be able to set or edit the meaning of each predefined Colour. | **T-U** – validator rejects a predefined Colour with a modified colour value; accepts a modified meaning. |
+| R-055.2 | U | F | S | Usability | Users shall be able to define additional Colours with their own colour value and meaning; two Colours shall not share the same colour value. | **T-U** – validator accepts a new Colour; rejects a second Colour with a duplicate colour value. **T-S** – new Colour appears in the UI palette and is assignable. |
 
 ---
 
@@ -447,3 +451,4 @@ Listed to make the scope boundary explicit. Each may be reconsidered in a future
 |---|---|---|---|
 | 1.0 | 2026-06 | Team | Initial table (RGFM-style identifiers). |
 | 2.0.0-draft | 2026-10-17 | Hermes (for Agos review) | Stable identifiers; glossary, stakeholders, constraints, verification column, exclusions, traceability table; 4 duplicate/inconsistent IDs fixed; 3 parent/child priority violations fixed; 10 proposed additions; 5 open issues. |
+| 2.0.1-draft | 2026-10-17 | Hermes (for Agos review) | Added R-055/.1/.2 (Colour palette with meaning) and the *Colour* glossary entry, traced from the `Color` kind decision in `songbird-yaml-schema`. |
