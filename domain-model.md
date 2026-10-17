@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Version | 0.4-draft |
+| Version | 0.5-draft |
 | Aligned with | Requirements Analysis v2.0.1-draft (with the changes listed in [Impact on the RA](#impact-on-the-ra)) |
 
 Conceptual model of the firewall's **configuration objects**. It describes what exists, how it is connected, and which constraints always hold. It contains no technical details (eBPF, netlink, exact YAML format) and no runtime state (conntrack, leases, sessions).
@@ -17,7 +17,13 @@ The model covers **IPv4 only**. IPv6 and Router Advertisement are deferred (see 
 
 ## Changes
 
-**0.4** (this version)
+**0.5** (this version)
+
+- **Zone** is again a set of Interfaces, as in FortiGate and in the RA glossary (R-046). The directed pair that holds the ordered Policies is now a **RuleSet** (`from` → `to`), matching the YAML schema.
+- `from` and `to` reference an Interface or a Zone. An Interface that belongs to a Zone is referenced through its Zone, except for traffic between two Interfaces of the same Zone (DM-37, DM-38, DM-39).
+- DM-06, DM-07, DM-09, DM-11, DM-12 and DM-36 rewritten for RuleSets.
+
+**0.4**
 
 - Three constraints found while aligning the Data Plane design (`dataplane.md` v3): DM-34 (active services open their ports on the Interface), DM-35 (Virtual IP versus management port), DM-36 (per-Zone Policy limit).
 - `fqdn` and `mac` Address types flagged as not yet supported by the Data Plane.
@@ -77,12 +83,18 @@ classDiagram
     StaticRoute "0..*" --> "1" Interface : outInterface
 ```
 
-### 2. Zones, Policies and the objects they reference
+### 2. Zones, RuleSets, Policies and the objects they reference
 
 ```mermaid
 classDiagram
+    class NetworkRef {
+        <<abstract>>
+    }
     class Interface
-    class Zone
+    class Zone {
+        +String intraZoneTraffic
+    }
+    class RuleSet
     class Policy {
         +String action
         +Boolean enabled
@@ -123,9 +135,12 @@ classDiagram
     }
     class ServiceGroup
 
-    Zone --> Interface : srcInterface
-    Zone --> Interface : dstInterface
-    Zone "1" o-- "0..*" Policy : ordered
+    NetworkRef <|-- Interface
+    NetworkRef <|-- Zone
+    Zone "0..1" o-- "1..*" Interface : interfaces
+    RuleSet --> NetworkRef : from
+    RuleSet --> NetworkRef : to
+    RuleSet "1" *-- "0..*" Policy : ordered rules
     Policy "1" --> "1..*" AddressRef : sources
     Policy "1" --> "1..*" AddressRef : destinations
     Policy "1" --> "1..*" ServiceRef : services
@@ -164,9 +179,9 @@ classDiagram
     ConfigObject "0..*" --> "0..1" Colour : colour
 ```
 
-`ConfigObject` is extended by: Interface, Zone, Policy, Address, AddressGroup, VirtualIP, Service, ServiceGroup, StaticRoute, IpPool. Their `name` and `colour` are therefore not repeated in the tables below. `InterfaceAddresses` is derived and has no file, so it has no colour. The nested classes (DhcpConfig, DhcpReservation, NatConfig) have neither.
+`ConfigObject` is extended by: Interface, Zone, RuleSet, Policy, Address, AddressGroup, VirtualIP, Service, ServiceGroup, StaticRoute, IpPool. Their `name` and `colour` are therefore not repeated in the tables below. `InterfaceAddresses` is derived and has no file, so it has no colour. The nested classes (DhcpConfig, DhcpReservation, NatConfig) have neither.
 
-**Legend.** Solid arrow = reference (by name in the YAML). Filled diamond = composition (nested in the YAML). Hollow diamond = aggregation (the Zone owns the ordered list of its Policies). `<<derived>>` = computed concept with no YAML file of its own.
+**Legend.** Solid arrow = reference (by name in the YAML). Filled diamond = composition (nested in the YAML). Hollow diamond = aggregation (a Zone groups existing Interfaces). The Policies are composed in their RuleSet: they are nested in its YAML. `<<derived>>` = computed concept with no YAML file of its own.
 
 ## Classes
 
@@ -214,19 +229,40 @@ classDiagram
 
 ### Zone
 
+A named **set of Interfaces** treated alike, as in FortiGate (e.g. `internal` = `lan1` + `lan2`). Membership is declared only in the Zone.
+
 | Attribute | Type | Req. | Notes |
 |---|---|---|---|
-| srcInterface | ref Interface | yes | where the traffic enters |
-| dstInterface | ref Interface | yes | where the traffic leaves; must differ from `srcInterface` (DM-06) |
+| interfaces | list of ref Interface | yes | at least one; an Interface belongs to at most one Zone (DM-37) |
+| intraZoneTraffic | allow / deny | no | verdict between two member Interfaces when no RuleSet exists for that pair; default `deny` (DM-39) |
+
+### RuleSet
+
+The ordered Policies for traffic entering from `from` and leaving through `to`.
+
+| Attribute | Type | Req. | Notes |
+|---|---|---|---|
+| from | ref Interface or Zone | yes | where the traffic enters |
+| to | ref Interface or Zone | yes | where the traffic leaves; must differ from `from` (DM-06) |
 | policies | ordered list of Policy | no | position = priority; the first match wins |
 
-A Zone is **directed**: `LAN-WAN1` and `WAN1-LAN` are two different Zones. In the UI each Zone is an expandable section listing its Policies.
+A RuleSet is **directed**: `lan1 → wan1` and `wan1 → lan1` are two different RuleSets. In the UI each RuleSet is an expandable section listing its Policies, and Policies never repeat the Interfaces.
+
+Examples:
+
+| `from` → `to` | Allowed? | Why |
+|---|---|---|
+| `lan1 → wan1` (no Zones) | yes | plain Interfaces |
+| `internal → wan1` (`internal` = `lan1` + `lan2`) | yes | Zone to Interface |
+| `lan1 → wan1` while `lan1` is in `internal` | **no** | a member is referenced through its Zone (DM-38) |
+| `lan1 → lan2`, both in `internal` | yes | intra-zone traffic: the only case where members are used directly (DM-38) |
+| `internal → internal` | **no** | `from = to` (DM-06) |
 
 ### Policy
 
 | Attribute | Type | Req. | Notes |
 |---|---|---|---|
-| zone | ref Zone | yes | implied by the list that contains the Policy |
+| ruleSet | ref RuleSet | yes | implied by the RuleSet that contains the Policy |
 | sources | list of ref (Address, AddressGroup) | yes | non-empty |
 | destinations | list of ref (Address, AddressGroup, VirtualIP, InterfaceAddresses) | yes | non-empty |
 | services | list of ref (Service, ServiceGroup) | yes | non-empty |
@@ -234,7 +270,7 @@ A Zone is **directed**: `LAN-WAN1` and `WAN1-LAN` are two different Zones. In th
 | nat | NatConfig | no | default: no NAT |
 | enabled | boolean | no | default true |
 
-Position is **not** an attribute: it is the order in the Zone's list.
+Position is **not** an attribute: it is the order in the RuleSet's list.
 
 ### NatConfig (composed in Policy)
 
@@ -303,7 +339,7 @@ Reserved name `<interface> addresses` (e.g. `LAN addresses`), resolved to the su
 
 | ID | Constraint |
 |---|---|
-| DM-01 | Names are unique per class. Address, AddressGroup, VirtualIP and InterfaceAddresses share one namespace; Service and ServiceGroup share another, because a Policy references them by name in a single list. Policy names are unique within their Zone. |
+| DM-01 | Names are unique per class. Address, AddressGroup, VirtualIP and InterfaceAddresses share one namespace; Service and ServiceGroup share another, because a Policy references them by name in a single list. Interface and Zone share a third, because `from` and `to` reference either. Policy names are unique within their RuleSet. |
 | DM-02 | Every reference points to an existing object (referential integrity). |
 
 ### Interfaces
@@ -315,20 +351,23 @@ Reserved name `<interface> addresses` (e.g. `LAN addresses`), resolved to the su
 | DM-05 | `allowAccess` contains only `ping` and `https`, without duplicates. Default: empty. `ping` governs ICMP echo only. It applies to the addresses of the Interface (owner rule), not to the Interface the packet arrives on. |
 | DM-34 | A network service enabled on an Interface implicitly accepts its own ports from that Interface, independently of `allowAccess`: the DHCP server (UDP 67) where `dhcp.enabled`, and the DNS server (UDP/TCP 53) on the Interfaces where it listens, once `DnsConfig` is modelled. `allowAccess` governs only management protocols. |
 
-### Zones and Policies
+### Zones, RuleSets and Policies
 
 | ID | Constraint |
 |---|---|
-| DM-06 | A Zone's `srcInterface` and `dstInterface` are real, existing Interfaces and **must differ**. `any` does not exist. |
-| DM-07 | There is at most one Zone per ordered pair `(srcInterface, dstInterface)`. |
+| DM-06 | A RuleSet's `from` and `to` reference existing Interfaces or Zones and **must differ**. `any` does not exist. A RuleSet from a Zone to the same Zone is not allowed: intra-zone traffic uses Interface-to-Interface RuleSets (DM-38). |
+| DM-07 | There is at most one RuleSet per ordered pair `(from, to)`. With DM-37 and DM-38, every ordered pair of distinct Interfaces is governed by at most one RuleSet. |
+| DM-37 | A Zone has at least one Interface, and an Interface belongs to at most one Zone. |
+| DM-38 | An Interface that belongs to a Zone is referenced in `from` / `to` through its Zone. The only exception is a RuleSet whose `from` and `to` are two different Interfaces of the **same** Zone (intra-zone traffic). |
+| DM-39 | For two distinct Interfaces of the same Zone with no RuleSet between them, `intraZoneTraffic` decides: `deny` (default) applies Default Deny, `allow` accepts the traffic. Both produce Flow Events (R-026). |
 | DM-08 | `sources`, `destinations` and `services` of a Policy are non-empty. |
-| DM-09 | Order matters only within a Zone. Traffic matching no Policy is dropped and logged (Default Deny, R-033). |
+| DM-09 | Order matters only within a RuleSet. Traffic between Interfaces governed by no RuleSet, or matching no Policy, is dropped and logged (Default Deny, R-033), except as stated in DM-39. |
 | DM-10 | A VirtualIP may appear only in `destinations`. |
-| DM-11 | If `destinations` contains a VirtualIP, the Zone's `srcInterface` equals the VirtualIP's `external.interface`. |
-| DM-12 | An Address, AddressGroup or InterfaceAddresses bound to an Interface is usable as a source only in Zones whose `srcInterface` is that Interface, and as a destination only in Zones whose `dstInterface` is that Interface. |
+| DM-11 | If `destinations` contains a VirtualIP, its `external.interface` is the RuleSet's `from` Interface, or a member of its `from` Zone. |
+| DM-12 | An Address, AddressGroup or InterfaceAddresses bound to an Interface is usable as a source only in RuleSets whose `from` is that Interface or a Zone containing it, and as a destination only in RuleSets whose `to` is that Interface or a Zone containing it. |
 | DM-13 | With `nat.mode = pool` the reference to an IpPool exists; in the other modes it is absent. |
 | DM-35 | If `https` is in `allowAccess` of an Interface, no VirtualIP on that Interface uses an `external.ip` of the Interface with TCP and an `external.port` that includes the management port (443). |
-| DM-36 | The number of enabled Policies in a Zone does not exceed the per-Zone limit of the Data Plane (ADR-0006). The Validator enforces it, so that an Apply never fails on map size. |
+| DM-36 | The number of enabled Policies in a RuleSet does not exceed the per-RuleSet limit of the Data Plane (ADR-0006). The Validator enforces it, so that an Apply never fails on map size. |
 
 ### Objects
 
@@ -379,10 +418,10 @@ Reserved name `<interface> addresses` (e.g. `LAN addresses`), resolved to the su
 
 - **`allowAccess` is not a Policy.** It governs traffic *to* the firewall (local-in); Policies govern traffic *through* it. The implicit drop in DM-09 applies only to the latter.
 - **Secure by default.** With `allowAccess` empty by default, the setup wizard (R-031) must set `https` (and optionally `ping`) on the LAN Interface, otherwise the UI is unreachable.
-- **Intra-interface Policies cannot be expressed** (DM-06). Consequently there is no hairpin NAT in v1: a LAN client reaching a VirtualIP would go from LAN to LAN. Workaround: internal DNS resolving the service to the private IP.
+- **Intra-interface Policies cannot be expressed** (DM-06: `from ≠ to`). Consequently there is no hairpin NAT in v1: a LAN client reaching a VirtualIP would go from LAN to LAN. Workaround: internal DNS resolving the service to the private IP.
 - **Traffic between hosts on the same L2 segment** does not traverse the firewall and cannot be filtered by a Policy.
 - **No per-Policy log level.** Every Flow produces an Event (R-026); volume is controlled by rate limiting (R-026.1), not by Policy.
-- **Policy identifier.** The "matched Policy identifier" required by R-026 is, for now, the pair (Zone name, Policy name). Renaming a Policy changes it.
+- **Policy identifier.** The "matched Policy identifier" required by R-026 is, for now, the pair (RuleSet name, Policy name). Renaming a Policy changes it.
 - **Group Interface is redundant.** Since DM-16 forces it to equal the members' Interface, `AddressGroup.interface` could be derived instead of stored. It is kept explicit for readability of the YAML.
 
 ## Deferred
@@ -403,11 +442,11 @@ Changes needed in the RA (proposed v2.0.2) for the model and the requirements to
 
 | Where | Change |
 |---|---|
-| Glossary: Zone | Redefine as a named, directed pair (source Interface, destination Interface). Remove "an Interface belongs to at most one Zone". |
-| R-014, R-014.x | A Policy has a Zone instead of incoming/outgoing Interface or Zone. |
-| R-046 | Reformulate: Zones definable as directed Interface pairs. Policies reference a Zone. |
-| R-055 | The example "a Zone" remains valid; check the wording. |
-| Open issue #4 | Resolved: no `any`; a Zone requires two distinct Interfaces. |
+| Glossary: Zone | **No change**: a named set of Interfaces, an Interface in at most one Zone. |
+| Glossary: RuleSet (new) | The ordered Policies for one directed pair (`from`, `to`) of Interfaces or Zones; one RuleSet per pair. |
+| R-014, R-014.x | The incoming and outgoing Interface or Zone are fields of the RuleSet; the Policy inherits them. |
+| R-046 | Keep. Add: an Interface that belongs to a Zone is referenced through it, except for traffic between two members of the same Zone (DM-38). |
+| Open issue #4 | Resolved: no `any`; `from ≠ to`; one RuleSet per pair. |
 | Glossary: Address Group, Service Group; R-011, R-013 | Groups are flat: remove nesting and cycle rejection. Address Group: all members on the same Interface, or none. Service Group: single protocol. |
 | R-012 | Add the `fqdn` and `mac` Address types, or remove them from the model. |
 | New requirement | Administrative access to the firewall (ping, HTTPS) configurable per Interface, default none. Check consistency with R-038 and R-031. |

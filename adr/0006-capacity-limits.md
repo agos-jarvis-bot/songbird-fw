@@ -15,9 +15,9 @@ eBPF maps have a fixed size set at creation, and the bitmap classifier has a fix
 
 | Limit | Proposed value | Driven by | Notes |
 |---|---|---|---|
-| Enabled Policies per Zone | 1 024 | Bitmap width: 16 × `u64` | Validator: DM-36 |
-| Zones | 256 | `zone_id` (`u16`), map sizes | 16 Interfaces give at most 240 directed pairs |
-| Total Policies | ≥ 4 096 | R-048 | Reached across Zones |
+| Enabled Policies per RuleSet | 1 024 | Bitmap width: 16 × `u64` | Validator: DM-36 |
+| RuleSets | 256 | `ruleset_id` (`u16`), map sizes | After Zone expansion, 16 Interfaces give at most 240 directed pairs |
+| Total Policies | ≥ 4 096 | R-048 | Reached across RuleSets |
 | Concurrent Flows | 1 048 576 | R-048 | Two CT entries each |
 | Half-open TCP Flows (SYN map) | 65 536 | SYN flood protection | |
 | DNAT entries (after port-range expansion) | 16 384 | VIP port ranges | Validator rejects a configuration that exceeds it |
@@ -33,7 +33,7 @@ eBPF maps have a fixed size set at creation, and the bitmap classifier has a fix
 
 **Negative**
 
-- Per-Zone limit of 1 024 Policies: a very large single Zone would require widening the bitmap (higher cost per new Flow).
+- Per-RuleSet limit of 1 024 Policies: a very large single RuleSet would require widening the bitmap (higher cost per new Flow).
 - The conntrack size is a significant share of RAM on small appliances.
 
 **To decide**

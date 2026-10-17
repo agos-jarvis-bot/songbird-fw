@@ -129,7 +129,7 @@ If any step fails, the Applier rolls back the steps already committed, **in reve
 
 ### 6.3 Fail-closed intermediate states
 
-The Data Plane switch is the single point where the Policies change, and it is atomic: traffic sees either the old or the new Policies, never a mix. Network changes before the switch only **add** Interfaces, which belong to no Zone yet and are therefore denied (`dataplane.md` §7.1). Removals happen after the switch. Intermediate states therefore never permit more than the old or the new configuration.
+The Data Plane switch is the single point where the Policies change, and it is atomic: traffic sees either the old or the new Policies, never a mix. Network changes before the switch only **add** Interfaces, which no RuleSet references yet and are therefore denied (`dataplane.md` §7.1). Removals happen after the switch. Intermediate states therefore never permit more than the old or the new configuration.
 
 Known limitation: when an Interface **address** changes, the window between step 2 and step 3 can see the new address with the old Policies (for example `InterfaceAddresses` still resolved to the old subnet). The window is milliseconds and biased towards denying; it is accepted for now.
 

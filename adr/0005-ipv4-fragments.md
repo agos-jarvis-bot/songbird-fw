@@ -32,4 +32,4 @@ Only the first fragment of an IPv4 datagram carries the L4 header. Non-initial f
 **Negative**
 
 - Applications behind the firewall that rely on IP fragmentation (some VPNs, large UDP DNS answers to clients that do not use the firewall's DNS, NFS over UDP) break when fragmentation happens on the path. To be documented.
-- R-053 says "Policies shall be able to drop": a global setting is a narrower reading. The RA wording should be aligned, or the setting moved per Zone later.
+- R-053 says "Policies shall be able to drop": a global setting is a narrower reading. The RA wording should be aligned, or the setting moved per RuleSet later.
