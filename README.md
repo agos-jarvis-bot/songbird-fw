@@ -472,6 +472,15 @@ Listed to make the scope boundary explicit. Each may be reconsidered in a future
 
 ## 12. Change log
 
+Every reviewed version is kept as a Git tag. The current text is always `README.md`; earlier versions are read with `git show <tag>:README.md` or on GitHub by selecting the tag.
+
+| Version | Tag | Commit |
+|---|---|---|
+| 1.0 | `ra-v1.0` | `577c62f` |
+| 2.0.0-draft | `ra-v2.0.0` | `dc2b532` |
+| 2.0.1-draft | `ra-v2.0.1` | `1a85095` |
+
+
 | Version | Date | Author | Summary |
 |---|---|---|---|
 | 1.0 | 2026-06 | Team | Initial table (RGFM-style identifiers). |
