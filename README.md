@@ -30,6 +30,7 @@ One file per decision. A record is never deleted: when a decision changes, a new
 | [0007](adr/0007-reference-platform.md) | Reference platform for development and performance verification | Proposed |
 | [0008](adr/0008-schema-versioning-and-rollback.md) | Configuration schema versioning, migration and rollback | Proposed |
 | [0009](adr/0009-secrets-encryption-key.md) | Protection and location of the secrets encryption key | Proposed |
+| [0010](adr/0010-dnat-in-policy.md) | DNAT is a section of the Policy, matched before translation | Accepted |
 
 ### Candidate ADRs (not written yet)
 

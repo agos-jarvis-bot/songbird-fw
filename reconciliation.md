@@ -61,7 +61,7 @@ Triggers are **coalesced**: they only set a "dirty" flag. One reconciliation run
 | 1 | **Read** | Reconciler → Config Manager | `HEAD` | Configuration tree, commit id | Repository unreadable → state *Degraded*, running state untouched, alert |
 | 2 | **Validate** | Validator | Tree | List of errors (file, path, reason, R-020.3) | Not applied (R-020.2); state *Failed*; errors shown in status and UI |
 | 3 | **Compile** | Compiler | Tree, runtime facts | `Plan` with one hashed section per driver | Should not happen after validation: treated as a bug, state *Failed* |
-| 4 | **Diff** | Reconciler | `Plan`, applied state | Set of sections to apply | Empty set → only record the commit as applied (e.g. a Colour changed) |
+| 4 | **Diff** | Reconciler | `Plan`, applied state | Set of sections to apply | Empty set → only record the commit as applied (e.g. a Color changed) |
 | 5 | **Apply** | Applier → drivers | Sections to apply | Applied, or rolled back with reason | Rolled back → *Failed*; rollback failed → *Degraded* (§6) |
 | 6 | **Observe** | Drivers → Observer | — | Per-driver status, read-back check | Mismatch → treated as drift (§8) |
 | 7 | **Status** | Reconciler | Results of 1–6 | `ReconcilerStatus`, `/health`, Audit Log entry, alert if needed | — |

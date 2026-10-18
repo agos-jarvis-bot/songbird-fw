@@ -2,12 +2,14 @@
 
 | | |
 |---|---|
-| Version | 0.5-draft |
-| Aligned with | Requirements Analysis v2.0.1-draft (with the changes listed in [Impact on the RA](#impact-on-the-ra)) |
+| Version | 0.6-draft |
+| Aligned with | Requirements Analysis v2.0.2-draft (proposed); `songbird-yaml-schema` v1alpha1 for colors, NAT and names |
 
 Conceptual model of the firewall's **configuration objects**. It describes what exists, how it is connected, and which constraints always hold. It contains no technical details (eBPF, netlink, exact YAML format) and no runtime state (conntrack, leases, sessions).
 
 The YAML schema (JSON Schema/CUE), the Validator rules and the Go structs all derive from this model: if the model changes, all three change.
+
+**Relation with the YAML schema.** Where this model and `songbird-yaml-schema` disagree on colors, NAT and names, the schema has precedence (team decision, 2026-10-18). The other differences are listed in [Open questions](#open-questions) and are still to be settled.
 
 Constraint identifiers are `DM-NN` (Domain Model), to avoid clashing with the RA constraints `C-NNN`. Like RA identifiers, they are stable and never reused: a removed constraint stays in the list as *Deferred* or *Withdrawn*.
 
@@ -17,7 +19,13 @@ The model covers **IPv4 only**. IPv6 and Router Advertisement are deferred (see 
 
 ## Changes
 
-**0.5** (this version)
+**0.6** (this version) — aligned with the YAML schema
+
+- **Names**: the schema's naming rules apply ([Names](#names)): lowercase DNS-label names, reserved `any`/`all`/`none`, four shared namespaces, optional system-generated `uuid`. Common metadata (`comment`, `color`, `category`, `labels`) on every object. Interface gets `device` (the Linux netdev name). Field names follow the schema: `rules`, `source`, `destination`, `service`.
+- **Color** (was Colour): `hex` and `predefined` (were `value` and `builtin`); the meaning is the object's `comment`; a Color has no color itself (DM-33 rewritten).
+- **DNAT is a section of the Policy**, matched **before** translation, as in the schema ([ADR-0010](adr/0010-dnat-in-policy.md)). VirtualIP and IpPool removed; `nat` is `{type: snat|dnat, translateIpTo, translateServiceTo}`. DM-10, DM-13, DM-19, DM-20, DM-35 rewritten or withdrawn; DM-40 and DM-41 added.
+
+**0.5**
 
 - **Zone** is again a set of Interfaces, as in FortiGate and in the RA glossary (R-046). The directed pair that holds the ordered Policies is now a **RuleSet** (`from` → `to`), matching the YAML schema.
 - `from` and `to` reference an Interface or a Zone. An Interface that belongs to a Zone is referenced through its Zone, except for traffic between two Interfaces of the same Zone (DM-37, DM-38, DM-39).
@@ -100,11 +108,7 @@ classDiagram
         +Boolean enabled
     }
     class NatConfig {
-        +String mode
-    }
-    class IpPool {
-        +String startIp
-        +String endIp
+        +String type
     }
     class AddressRef {
         <<abstract>>
@@ -112,18 +116,10 @@ classDiagram
     class Address {
         +String type
         +String value
-        +Boolean builtin
     }
     class AddressGroup
     class InterfaceAddresses {
         <<derived>>
-    }
-    class VirtualIP {
-        +String externalIp
-        +String mappedIp
-        +String protocol
-        +String externalPort
-        +String mappedPort
     }
     class ServiceRef {
         <<abstract>>
@@ -131,7 +127,7 @@ classDiagram
     class Service {
         +String protocol
         +String ports
-        +Boolean builtin
+        +Boolean predefined
     }
     class ServiceGroup
 
@@ -141,15 +137,15 @@ classDiagram
     RuleSet --> NetworkRef : from
     RuleSet --> NetworkRef : to
     RuleSet "1" *-- "0..*" Policy : ordered rules
-    Policy "1" --> "1..*" AddressRef : sources
-    Policy "1" --> "1..*" AddressRef : destinations
-    Policy "1" --> "1..*" ServiceRef : services
-    Policy "1" *-- "1" NatConfig
-    NatConfig "0..*" --> "0..1" IpPool : pool
+    Policy "1" --> "1..*" AddressRef : source
+    Policy "1" --> "1..*" AddressRef : destination
+    Policy "1" --> "1..*" ServiceRef : service
+    Policy "1" *-- "0..1" NatConfig : nat
+    NatConfig "0..*" --> "0..1" Address : translateIpTo
+    NatConfig "0..*" --> "0..1" Service : translateServiceTo
 
     AddressRef <|-- Address
     AddressRef <|-- AddressGroup
-    AddressRef <|-- VirtualIP
     AddressRef <|-- InterfaceAddresses
     ServiceRef <|-- Service
     ServiceRef <|-- ServiceGroup
@@ -158,30 +154,51 @@ classDiagram
     ServiceGroup "0..*" --> "1..*" Service : members
     Address "0..*" --> "0..1" Interface : interface
     AddressGroup "0..*" --> "0..1" Interface : interface
-    VirtualIP "0..*" --> "1" Interface : external
     InterfaceAddresses "1" --> "1" Interface : of
 ```
 
-### 3. Common base: name and Colour
+### 3. Common base: metadata and Color
 
 ```mermaid
 classDiagram
     class ConfigObject {
         <<abstract>>
         +String name
+        +String uuid
+        +String comment
+        +String category
+        +Map labels
     }
-    class Colour {
-        +String name
-        +String value
-        +String meaning
-        +Boolean builtin
+    class Color {
+        +String hex
+        +Boolean predefined
     }
-    ConfigObject "0..*" --> "0..1" Colour : colour
+    ConfigObject <|-- Color
+    ConfigObject "0..*" --> "0..1" Color : color
 ```
 
-`ConfigObject` is extended by: Interface, Zone, RuleSet, Policy, Address, AddressGroup, VirtualIP, Service, ServiceGroup, StaticRoute, IpPool. Their `name` and `colour` are therefore not repeated in the tables below. `InterfaceAddresses` is derived and has no file, so it has no colour. The nested classes (DhcpConfig, DhcpReservation, NatConfig) have neither.
+`ConfigObject` is extended by: Interface, Zone, RuleSet, Address, AddressGroup, Service, ServiceGroup, StaticRoute, Color. Their metadata are therefore not repeated in the tables below. A Policy is not a file of its own: it has `name`, `uuid`, `comment` and `enabled` inside its RuleSet. `InterfaceAddresses` is derived and has no metadata. The nested classes (DhcpConfig, DhcpReservation, NatConfig) have none. A Color cannot reference a Color (DM-33).
 
-**Legend.** Solid arrow = reference (by name in the YAML). Filled diamond = composition (nested in the YAML). Hollow diamond = aggregation (a Zone groups existing Interfaces). The Policies are composed in their RuleSet: they are nested in its YAML. `<<derived>>` = computed concept with no YAML file of its own.
+## Names
+
+Adopted from `songbird-yaml-schema` (design decisions 1, 2, 8 and 10).
+
+| Rule | Value |
+|---|---|
+| Primary key | `name`. Human-readable, stable, used in references and Git diffs |
+| Format | `^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$`, at most 63 characters (lowercase DNS-label-like) |
+| Reserved | `any`, `all`, `none` |
+| `uuid` | Optional, generated by the system on first save, never written by hand; lets the UI follow renames |
+| Namespaces | *address*: Address, AddressGroup · *service*: Service, ServiceGroup · *network*: Interface, Zone · *color*: Color · RuleSets have their own · Policy names are unique within their RuleSet |
+| Interface | `name` is what users see and reference (`wan`, `lan1`); `device` is the Linux netdev (`enp1s0`). A VLAN references its parent by object name, not by device |
+
+Consequences on this model:
+
+- Predefined Services use valid names: `http`, `https`, `dns`, … (no longer `HTTP`, `ALL`).
+- The predefined Address `all` cannot exist, because `all` is reserved. How "any address" and "any service" are written is still open: the schema uses the keyword `["any"]` (see [Open questions](#open-questions)).
+- The derived name `<interface> addresses` contains a space and is not a valid name. Its new form is still open (see InterfaceAddresses).
+
+**Legend.** Solid arrow = reference (by name in the YAML). Filled diamond = composition (nested in the YAML). Hollow diamond = aggregation (a Zone groups existing Interfaces). Triangle = specialisation. The Policies are composed in their RuleSet: they are nested in its YAML. `<<derived>>` = computed concept with no YAML file of its own.
 
 ## Classes
 
@@ -191,6 +208,7 @@ classDiagram
 |---|---|---|---|
 | role | enum (wan, lan, ...) | yes | `lan` enables `dhcp` (DM-24) |
 | type | enum (physical, vlan) | yes | |
+| device | Linux netdev name | for `physical` | e.g. `enp1s0`; absent for `vlan` |
 | parent | ref Interface | for `vlan` | the physical Interface carrying the 802.1Q tag (DM-03) |
 | vlanId | integer 1–4094 | for `vlan` | |
 | addresses | list of IPv4 address/prefix | yes | primary, secondary and additional subnets |
@@ -244,7 +262,7 @@ The ordered Policies for traffic entering from `from` and leaving through `to`.
 |---|---|---|---|
 | from | ref Interface or Zone | yes | where the traffic enters |
 | to | ref Interface or Zone | yes | where the traffic leaves; must differ from `from` (DM-06) |
-| policies | ordered list of Policy | no | position = priority; the first match wins |
+| rules | ordered list of Policy | yes (may be empty) | position = priority; the first match wins |
 
 A RuleSet is **directed**: `lan1 → wan1` and `wan1 → lan1` are two different RuleSets. In the UI each RuleSet is an expandable section listing its Policies, and Policies never repeat the Interfaces.
 
@@ -262,23 +280,28 @@ Examples:
 
 | Attribute | Type | Req. | Notes |
 |---|---|---|---|
+| name | name | yes | unique within the RuleSet; reported in the Traffic Log (R-026) |
 | ruleSet | ref RuleSet | yes | implied by the RuleSet that contains the Policy |
-| sources | list of ref (Address, AddressGroup) | yes | non-empty |
-| destinations | list of ref (Address, AddressGroup, VirtualIP, InterfaceAddresses) | yes | non-empty |
-| services | list of ref (Service, ServiceGroup) | yes | non-empty |
+| source | list of ref (Address, AddressGroup) | yes | non-empty |
+| destination | list of ref (Address, AddressGroup, InterfaceAddresses) | yes | non-empty; for `dnat`, the address **before** translation (DM-40) |
+| service | list of ref (Service, ServiceGroup) | yes | non-empty; for `dnat`, the service **before** translation |
 | action | accept / drop | yes | |
-| nat | NatConfig | no | default: no NAT |
+| nat | NatConfig | no | absent = no NAT; forbidden with `drop` (DM-13) |
 | enabled | boolean | no | default true |
 
 Position is **not** an attribute: it is the order in the RuleSet's list.
 
 ### NatConfig (composed in Policy)
 
-`mode` ∈ none, interface, pool. With `pool`, a reference to an IpPool is mandatory (DM-13).
+As in the schema ([ADR-0010](adr/0010-dnat-in-policy.md)).
 
-### IpPool
+| Attribute | Type | Req. | Notes |
+|---|---|---|---|
+| type | snat / dnat | yes | |
+| translateIpTo | ref Address | `dnat`: yes · `snat`: no | `snat`: omitted = masquerade to the primary address of the outgoing Interface; set = an Address (subnet or range) used as IP pool. `dnat`: a single-host Address (/32) or a range |
+| translateServiceTo | ref Service | no, `dnat` only | one tcp/udp/sctp entry with a single port; omitted = port unchanged |
 
-`startIp`, `endIp`.
+A `dnat` Policy matches its `destination` and `service` **before** translation, i.e. the public address and port, and then rewrites them.
 
 ### Address (extends AddressRef)
 
@@ -287,7 +310,7 @@ Position is **not** an attribute: it is the order in the RuleSet's list.
 | type | enum: ip, range, subnet, fqdn, mac | yes | `fqdn` and `mac` are not yet supported by the Data Plane (`dataplane.md` §7.3) |
 | value | depends on type | yes | ip: address; range: start-end; subnet: CIDR; fqdn: name; mac: MAC address |
 | interface | ref Interface | no | if present, restricts where it can be used (DM-12) |
-| builtin | boolean | no | marks predefined objects such as `all` (DM-21) |
+
 
 ### AddressGroup (extends AddressRef)
 
@@ -298,17 +321,7 @@ Position is **not** an attribute: it is the order in the RuleSet's list.
 
 ### InterfaceAddresses (derived, extends AddressRef)
 
-Reserved name `<interface> addresses` (e.g. `LAN addresses`), resolved to the subnets in `Interface.addresses`. It has no YAML file: it follows IP changes automatically, and the Compiler recompiles the Policies that use it. It is bound to its Interface like an Address with `interface` set.
-
-### VirtualIP (extends AddressRef)
-
-| Attribute | Type | Req. | Notes |
-|---|---|---|---|
-| external.interface | ref Interface | yes | Interface the traffic enters from |
-| external.ip | IPv4 | yes | |
-| mapped.ip | IPv4 | yes | destination IP after translation |
-| protocol | tcp / udp | yes | |
-| external.port, mapped.port | port or range | yes | |
+Derived name, format **to be decided** (the former `<interface> addresses` is not a valid name, see [Names](#names)), resolved to the subnets in `Interface.addresses`. It has no YAML file: it follows IP changes automatically, and the Compiler recompiles the Policies that use it. It is bound to its Interface like an Address with `interface` set.
 
 ### Service (extends ServiceRef)
 
@@ -316,7 +329,7 @@ Reserved name `<interface> addresses` (e.g. `LAN addresses`), resolved to the su
 |---|---|---|---|
 | protocol | enum (tcp, udp, icmp, any) | yes | |
 | ports | port or range | for tcp/udp | forbidden for the other protocols (DM-17) |
-| builtin | boolean | no | marks predefined objects such as `ALL`, `HTTP` |
+| predefined | boolean | no | marks objects shipped with the system, such as `http`, `https`, `dns` (DM-21) |
 
 ### ServiceGroup (extends ServiceRef)
 
@@ -324,14 +337,16 @@ Reserved name `<interface> addresses` (e.g. `LAN addresses`), resolved to the su
 |---|---|---|---|
 | members | list of ref Service | yes | non-empty, flat, **all with the same protocol** (DM-18) |
 
-### Colour
+### Color
+
+A palette entry used to classify related objects (R-055). What a Color stands for ("Backup / Veeam", "main LAN", "DMZ") is its `comment`, like for every other object.
 
 | Attribute | Type | Req. | Notes |
 |---|---|---|---|
-| name | string | yes | key |
-| value | colour (e.g. `#49F527`) | yes | unique among Colours (DM-33) |
-| meaning | string | no | user-defined, e.g. "Backup" |
-| builtin | boolean | no | predefined palette: `value` is immutable, `meaning` is editable |
+| hex | `#RRGGBB` | yes | unique among Colors (DM-33) |
+| predefined | boolean | no | entry of the shipped palette: `hex` is immutable, `comment` is free |
+
+Other objects reference a Color by name in `color`, never by a literal hex.
 
 ## Constraints
 
@@ -339,7 +354,7 @@ Reserved name `<interface> addresses` (e.g. `LAN addresses`), resolved to the su
 
 | ID | Constraint |
 |---|---|
-| DM-01 | Names are unique per class. Address, AddressGroup, VirtualIP and InterfaceAddresses share one namespace; Service and ServiceGroup share another, because a Policy references them by name in a single list. Interface and Zone share a third, because `from` and `to` reference either. Policy names are unique within their RuleSet. |
+| DM-01 | Names follow the format and reserved words of [Names](#names) and are unique within their namespace: Address and AddressGroup; Service and ServiceGroup; Interface and Zone; Color. RuleSet names are unique among RuleSets; Policy names within their RuleSet. |
 | DM-02 | Every reference points to an existing object (referential integrity). |
 
 ### Interfaces
@@ -360,13 +375,15 @@ Reserved name `<interface> addresses` (e.g. `LAN addresses`), resolved to the su
 | DM-37 | A Zone has at least one Interface, and an Interface belongs to at most one Zone. |
 | DM-38 | An Interface that belongs to a Zone is referenced in `from` / `to` through its Zone. The only exception is a RuleSet whose `from` and `to` are two different Interfaces of the **same** Zone (intra-zone traffic). |
 | DM-39 | For two distinct Interfaces of the same Zone with no RuleSet between them, `intraZoneTraffic` decides: `deny` (default) applies Default Deny, `allow` accepts the traffic. Both produce Flow Events (R-026). |
-| DM-08 | `sources`, `destinations` and `services` of a Policy are non-empty. |
+| DM-08 | `source`, `destination` and `service` of a Policy are non-empty. |
 | DM-09 | Order matters only within a RuleSet. Traffic between Interfaces governed by no RuleSet, or matching no Policy, is dropped and logged (Default Deny, R-033), except as stated in DM-39. |
-| DM-10 | A VirtualIP may appear only in `destinations`. |
-| DM-11 | If `destinations` contains a VirtualIP, its `external.interface` is the RuleSet's `from` Interface, or a member of its `from` Zone. |
+| DM-10 | *Withdrawn in 0.6* (VirtualIP removed). |
+| DM-11 | *Withdrawn in 0.6* (VirtualIP removed). |
 | DM-12 | An Address, AddressGroup or InterfaceAddresses bound to an Interface is usable as a source only in RuleSets whose `from` is that Interface or a Zone containing it, and as a destination only in RuleSets whose `to` is that Interface or a Zone containing it. |
-| DM-13 | With `nat.mode = pool` the reference to an IpPool exists; in the other modes it is absent. |
-| DM-35 | If `https` is in `allowAccess` of an Interface, no VirtualIP on that Interface uses an `external.ip` of the Interface with TCP and an `external.port` that includes the management port (443). |
+| DM-13 | `nat` is forbidden when `action = drop`. `snat`: `translateIpTo`, if present, is a subnet or range Address; `translateServiceTo` is absent. `dnat`: `translateIpTo` is a single-host Address or a range; `translateServiceTo`, if present, is a Service with exactly one tcp/udp/sctp entry and a single port, with the same protocol as the Policy's `service`. |
+| DM-40 | A `dnat` Policy has an explicit `destination` and, if it translates the port, an explicit `service` (not `any`). The destination should be an address of the `from` Interface (or of a member of the `from` Zone): otherwise the Validator warns, because traffic to it is not normally received by the firewall. |
+| DM-41 | Two `dnat` Policies whose RuleSets share an incoming Interface do not overlap on (protocol, destination, service). Otherwise the translation of a packet would be ambiguous (`dataplane.md` §7.4). A `dnat` Policy shadowed by an earlier Policy of its RuleSet produces a Validator warning. |
+| DM-35 | If `https` is in `allowAccess` of an Interface, no `dnat` Policy whose RuleSet comes from that Interface translates an address of that Interface on TCP with a `service` that includes the management HTTPS port (443 by default, `System.admin.httpsPort` in the schema). |
 | DM-36 | The number of enabled Policies in a RuleSet does not exceed the per-RuleSet limit of the Data Plane (ADR-0006). The Validator enforces it, so that an Apply never fails on map size. |
 
 ### Objects
@@ -374,13 +391,13 @@ Reserved name `<interface> addresses` (e.g. `LAN addresses`), resolved to the su
 | ID | Constraint |
 |---|---|
 | DM-14 | `value` is consistent with `type` (a range has start ≤ end; a subnet is valid CIDR; etc.). |
-| DM-15 | An AddressGroup has at least one member, no duplicates, and its members are Addresses only (not VirtualIPs, not derived addresses, not other groups). |
+| DM-15 | An AddressGroup has at least one member, no duplicates, and its members are Addresses only (not derived addresses, not other groups). |
 | DM-16 | All members of an AddressGroup belong to the same Interface, or none of them belongs to any. In the first case the group's `interface` is that Interface; in the second it is absent. |
 | DM-17 | `ports` is mandatory and valid (1–65535, ordered range) for `tcp` and `udp`, and absent for the other protocols. |
 | DM-18 | A ServiceGroup has at least one member, no duplicates, and all members have the same `protocol`. |
-| DM-19 | A VirtualIP's `external.ip` belongs to `Interface.addresses` of its external Interface. |
-| DM-20 | If `external.port` is a range, `mapped.port` is a range of the same length or a single port. |
-| DM-21 | Predefined objects (Address `all`, Service `ALL`, `HTTP`, ...) are YAML files generated at setup with `builtin: true`. The Validator checks they are present and rejects edits and deletions. |
+| DM-19 | *Withdrawn in 0.6*: replaced by the warning in DM-40. |
+| DM-20 | *Withdrawn in 0.6*: `translateServiceTo` is a single port (DM-13); a range in the original `service` is translated to that port. |
+| DM-21 | Predefined objects (Services `http`, `https`, `dns`, …, and the predefined Colors) are YAML files generated at setup with `predefined: true`. The Validator checks they are present and rejects edits of their defining fields and deletions; `comment` stays editable. How "any" is expressed is open (no object may be named `all`). |
 
 ### Routing
 
@@ -408,17 +425,17 @@ Reserved name `<interface> addresses` (e.g. `LAN addresses`), resolved to the su
 | DM-31 | *Deferred.* Was: `dhcpv6Server` and `routerAdvertisement` allowed only on `role = lan`. |
 | DM-32 | *Deferred.* Was: a Router Advertisement has exactly one of `prefix` and `delegatedFrom`. |
 
-### Colour
+### Color
 
 | ID | Constraint |
 |---|---|
-| DM-33 | Colour `value`s are unique. A `builtin` Colour keeps its `value`; only its `meaning` may change. A configuration object references at most one existing Colour. |
+| DM-33 | Color `hex` values are unique. A `predefined` Color keeps its `hex`, and the names of the shipped palette cannot be reused by user Colors. A Color has no `color` itself. Every other object references at most one existing Color by name. |
 
 ## Design notes
 
 - **`allowAccess` is not a Policy.** It governs traffic *to* the firewall (local-in); Policies govern traffic *through* it. The implicit drop in DM-09 applies only to the latter.
 - **Secure by default.** With `allowAccess` empty by default, the setup wizard (R-031) must set `https` (and optionally `ping`) on the LAN Interface, otherwise the UI is unreachable.
-- **Intra-interface Policies cannot be expressed** (DM-06: `from ≠ to`). Consequently there is no hairpin NAT in v1: a LAN client reaching a VirtualIP would go from LAN to LAN. Workaround: internal DNS resolving the service to the private IP.
+- **Intra-interface Policies cannot be expressed** (DM-06: `from ≠ to`). Consequently there is no hairpin NAT in v1: a LAN client reaching a published service on its public address would go from LAN to LAN. Workaround: internal DNS resolving the service to the private IP.
 - **Traffic between hosts on the same L2 segment** does not traverse the firewall and cannot be filtered by a Policy.
 - **No per-Policy log level.** Every Flow produces an Event (R-026); volume is controlled by rate limiting (R-026.1), not by Policy.
 - **Policy identifier.** The "matched Policy identifier" required by R-026 is, for now, the pair (RuleSet name, Policy name). Renaming a Policy changes it.
@@ -438,28 +455,20 @@ Not modelled for now, and the RA requirements that depend on them:
 
 ## Impact on the RA
 
-Changes needed in the RA (proposed v2.0.2) for the model and the requirements to be consistent:
+The changes required by this model are applied in the proposed **RA v2.0.2-draft**. Still pending in the RA, because the model and the schema have not converged yet:
 
-| Where | Change |
+| Where | Pending decision |
 |---|---|
-| Glossary: Zone | **No change**: a named set of Interfaces, an Interface in at most one Zone. |
-| Glossary: RuleSet (new) | The ordered Policies for one directed pair (`from`, `to`) of Interfaces or Zones; one RuleSet per pair. |
-| R-014, R-014.x | The incoming and outgoing Interface or Zone are fields of the RuleSet; the Policy inherits them. |
-| R-046 | Keep. Add: an Interface that belongs to a Zone is referenced through it, except for traffic between two members of the same Zone (DM-38). |
-| Open issue #4 | Resolved: no `any`; `from ≠ to`; one RuleSet per pair. |
-| Glossary: Address Group, Service Group; R-011, R-013 | Groups are flat: remove nesting and cycle rejection. Address Group: all members on the same Interface, or none. Service Group: single protocol. |
-| R-012 | Add the `fqdn` and `mac` Address types, or remove them from the model. |
-| New requirement | Administrative access to the firewall (ping, HTTPS) configurable per Interface, default none. Check consistency with R-038 and R-031. |
-| R-001, R-020.4 | State the StaticRoute fields: destination, gateway, outgoing Interface, distance, priority, and the backup-route behaviour. |
-| R-017.2 | Already Must; the model implements it (DHCP reservations by MAC). |
-| IPv6 requirements | See [Deferred](#deferred): decide whether to lower their priority or schedule them for a later milestone. |
-| New requirements | IpPool / NAT with pool (suggested Could); Policy `enabled` flag; explicit exclusion (W) of intra-interface Policies and hairpin NAT. |
-| Glossary: Action | Use `drop`, consistent with the model. |
+| R-011, R-013, glossary of groups | Flat groups (model) or nested groups with cycle check (schema and RA) |
+| R-012 | `fqdn` and `mac` Address types: in the schema, not supported by the Data Plane |
+| New requirement | IP pool for SNAT (`translateIpTo` on `snat`), suggested Could |
 
 ## Open questions
 
 - **Routes with the same destination, distance and priority**: rejected for now (DM-23). Allow them as equal-cost multipath instead? The dataplane would need to balance Flows across gateways.
 - **Defaults** for `distance` (10) and `priority` (1) are proposed, not decided.
-- **`ip` Address type**: equivalent to a /32 subnet. How is it represented in the YAML?
+- **`ip` Address type**: the schema has no `ip` type (a single host is a `/32` subnet). Align the model when the remaining schema differences are settled.
+- **Remaining differences with the schema** (precedence not yet decided): how "any" is written (keyword `["any"]` or a predefined object); groups flat or nested, Service with one or several protocols; per-Policy `log`; `allowAccess` values and `dns`/`ntp` `serveToInterfaces`; `Address.interface` as hint or as restriction (DM-12); Interface `role` values.
+- **InterfaceAddresses name**: a format that cannot collide with user names, e.g. a reference syntax such as `lan1:addresses` (needs a schema extension, since `:` is not allowed in names).
 - **DnsConfig**: model of the DNS forwarder/recursor (R-018) still to be defined.
 - **Still to model**: User and Role (R-043), Repository (R-021), notifications (R-030), TLS/ACME (R-038), HA (R-023).

@@ -20,7 +20,7 @@ eBPF maps have a fixed size set at creation, and the bitmap classifier has a fix
 | Total Policies | ≥ 4 096 | R-048 | Reached across RuleSets |
 | Concurrent Flows | 1 048 576 | R-048 | Two CT entries each |
 | Half-open TCP Flows (SYN map) | 65 536 | SYN flood protection | |
-| DNAT entries (after port-range expansion) | 16 384 | VIP port ranges | Validator rejects a configuration that exceeds it |
+| DNAT entries (after port-range expansion) | 16 384 | Port ranges in `dnat` Policies | Validator rejects a configuration that exceeds it |
 | Ring buffer | 8 MB | R-026.1 | Rate limiting still applies |
 
 **Memory estimate for conntrack**: key 40 bytes + entry 96 bytes + per-element overhead, twice per Flow, is on the order of **350–400 MB for 1 M Flows**. This must be measured on the reference platform; if it is too much for the target hardware, the Flow limit becomes a configurable value with a lower default.
