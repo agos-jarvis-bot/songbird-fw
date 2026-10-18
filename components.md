@@ -171,8 +171,10 @@ Every requirement has exactly one **responsible** component, which carries the v
 |---|---|---|
 | R-001, R-001.1, R-001.2 | Data Plane | Network Driver (interfaces, routes) |
 | R-001.3, R-001.4 *(deferred)* | Data Plane | Network Driver |
+| R-001.5 | Network Driver (routes with distance and priority) | Observer (link state) |
+| R-057 | Data Plane (interim IPv6 drop) | — |
 | R-002 | Data Plane | Compiler |
-| R-003 | Data Plane | Compiler (Virtual IP) |
+| R-003 | Data Plane | Compiler (DNAT candidates) |
 | R-004 *(deferred)* | Network Driver | — |
 | R-005 *(deferred)* | Data Plane | — |
 | R-006, R-006.1, R-006.2 *(deferred)* | Data Plane | Compiler |
@@ -181,13 +183,14 @@ Every requirement has exactly one **responsible** component, which carries the v
 
 | Requirement | Responsible | Contributes |
 |---|---|---|
-| R-009, R-009.1 | Web UI | API Server |
+| R-009, R-009.1, R-009.2 | Web UI | API Server, Compiler (omits disabled Policies) |
 | R-010, R-011, R-012, R-013 | Validator | Compiler |
 | R-014 | Validator | — |
 | R-014.1, R-014.2, R-014.3 | Compiler (expands groups and lists into match rules) | Data Plane |
 | R-014.4 | Data Plane (first match wins) | Compiler (preserves order) |
 | R-015, R-015.1 | Web UI | Observer (interface events) |
-| R-046 (Zones) | Validator | Compiler |
+| R-014.5, R-046, R-046.1 | Validator | Compiler (expands Zones) |
+| R-046.2 | Compiler | Data Plane |
 
 ### Network services
 
@@ -205,6 +208,7 @@ Every requirement has exactly one **responsible** component, which carries the v
 |---|---|---|
 | R-019 | Updater | Reconciler (config after update) |
 | R-020, R-020.1 | Config Manager | Validator |
+| R-021.5 | Config Manager (optimistic locking) | API Server |
 | R-020.2, R-020.3, R-020.4 | Validator | Web UI (shows errors) |
 | R-020.5 | Config Manager | — |
 | R-020.6 | Applier | Drivers, Reconciler |
@@ -248,6 +252,7 @@ Every requirement has exactly one **responsible** component, which carries the v
 | Requirement | Responsible | Contributes |
 |---|---|---|
 | R-038, R-038.1 | API Server | — |
+| R-056 | Data Plane (local-in) | Compiler |
 | R-038.2, R-038.3, R-038.4 | Certificate Manager | Alerting |
 | R-043 | API Server | Auth |
 | R-043.1, R-043.2, R-043.4, R-043.5, R-043.6, R-043.7 | Auth | — |
@@ -279,13 +284,9 @@ Every requirement has exactly one **responsible** component, which carries the v
 
 ### Behaviour with no requirement yet
 
-The domain model defines behaviour that has no requirement in the RA. These are listed in the domain model under *Impact on the RA*; once they are written, each needs a responsible component:
-
 | Behaviour | Proposed responsible |
 |---|---|
-| Per-Interface administrative access (`ping`, `https`) | Data Plane (local-in), Compiler |
-| NAT with IP pool | Data Plane |
-| Policy `enabled` flag | Compiler |
+| SNAT to an IP pool (`snat` with `translateIpTo`) | Data Plane (RA open issue #12) |
 
 ## Decisions taken and open issues
 

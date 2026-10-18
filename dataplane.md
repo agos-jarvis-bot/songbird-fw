@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Version | 3.1-draft |
+| Version | 3.2-draft |
 | Status | Draft for team review |
 | Supersedes | `dataplane.md` v2 (Italian, exploratory, RGFM-style identifiers) |
 | Inputs | Requirements Analysis v2.0.1-draft, Domain Model v0.4-draft, Component View v0.1-draft, `reconciliation.md` |
@@ -27,12 +27,13 @@ This document describes the internal design of the **Data Plane**: the eBPF prog
 
 ## Changes since v2
 
+- **3.2**: DNAT is a section of the Policy, matched before translation (ADR-0010, domain model v0.6): VIP matching replaced by DNAT-candidate matching (§7.4); the VIP dimension of the classifier is removed.
 - **3.1**: Zone selection replaced by RuleSet selection (domain model v0.5).
 - Identifiers aligned with RA v2 (`R-NNN`, `C-NNN`); document translated to English.
 - **RuleSets** (domain model v0.5): the classifier first selects the RuleSet that governs the Interface pair, then classifies only among its Policies. Five match dimensions become four, and bitmaps are per RuleSet. Zones (sets of Interfaces) are expanded by the Compiler and do not exist in the Data Plane.
 - **IPv6 is deferred**: an explicit interim policy drops IPv6 instead of passing it (§5).
 - New **local-in** path for traffic addressed to the firewall itself (`allowAccess`, active services) and **local-out** path for traffic the firewall originates (§6).
-- **Virtual IP matching**: a DNAT'ed packet matches only Policies that reference its VIP (§7.4).
+- **DNAT matching**: a translated packet is accepted only if the first matching Policy is the `dnat` Policy that produced the translation (§7.4).
 - Each map generation carries the **commit id** it was compiled from, so the Control Plane knows what is applied after a restart (§8).
 - Events carry `policy_gen`, so the matched Policy can be named even after reordering (§11).
 - The six open questions of v2 are now ADR-0002 … ADR-0007.
@@ -96,16 +97,16 @@ flowchart LR
         PF --> RN["Reverse NAT lookup<br/>real tuple, no rewrite"]
         RN --> CT{CT lookup}
         CT -- "established / related" --> PASS["XDP_PASS + metadata"]
-        CT -- new --> DN{"DNAT lookup<br/>ingress if, proto, addr, port"}
-        DN -- hit --> FIB
+        CT -- new --> DN{"DNAT candidate lookup<br/>ingress if, proto, addr, port"}
+        DN -- "hit: translated destination" --> FIB
         DN -- miss --> LOC{"Destination is a<br/>firewall address?"}
         LOC -- yes --> LI["Local-in check<br/>allowAccess, active services"]
         LI -- allow --> NEWL[Create CT] --> PASS
         LI -- deny --> DROP
-        LOC -- no --> FIB["bpf_fib_lookup<br/>post-DNAT destination"]
+        LOC -- no --> FIB["bpf_fib_lookup<br/>translated destination"]
         FIB --> Z{"RuleSet lookup<br/>in if, out if"}
         Z -- none --> DROP["XDP_DROP + event"]
-        Z -- found --> POL["Classifier<br/>per-RuleSet bitmaps"]
+        Z -- found --> POL["Classifier on the original tuple<br/>per-RuleSet bitmaps"]
         POL -- accept --> NEW[Create CT] --> PASS
         POL -- "drop / default deny" --> DROP
     end
@@ -116,9 +117,9 @@ flowchart LR
     TCE --> OUT["Egress Interface<br/>also VLAN / ppp0"]
 ```
 
-XDP passes its decision (Flow id, NAT flags, VIP id) to TC through **XDP metadata** (`bpf_xdp_adjust_meta` → `skb->data_meta`), so TC does not repeat the lookups.
+XDP passes its decision (Flow id, NAT flags, DNAT id) to TC through **XDP metadata** (`bpf_xdp_adjust_meta` → `skb->data_meta`), so TC does not repeat the lookups.
 
-The DNAT lookup comes **before** the local-address check because a Virtual IP's external address is usually an address of the firewall (DM-19): a packet to `WAN-IP:80` with a VIP is translated, not delivered locally.
+The DNAT candidate lookup comes **before** the local-address check because the public address of a `dnat` Policy is usually an address of the firewall (DM-40): a packet to `WAN-IP:443` published by a `dnat` Policy is translated, not delivered locally.
 
 ## 5. Parsing
 
@@ -135,7 +136,7 @@ The DNAT lookup comes **before** the local-address check because a Virtual IP's 
 | Class | Definition | Decided by |
 |---|---|---|
 | **Forwarded** | Enters an Interface, leaves another | RuleSet + Policies (§7), Default Deny |
-| **Local-in** | Addressed to an address of the firewall, not matched by a VIP | `allowAccess` and active services of the ingress Interface |
+| **Local-in** | Addressed to an address of the firewall, not matched by a DNAT candidate | `allowAccess` and active services of the ingress Interface |
 | **Local-out** | Originated by the firewall (DNS upstream queries, Git push, ACME, alerting) | Always allowed; tracked so that replies are accepted |
 | **Control** | ARP, DHCP to the firewall | Always allowed (§5) |
 
@@ -178,7 +179,7 @@ SNAT is not applied to local-out Flows: their source is already an Interface add
 ruleset_id = rulesets[{in_logical_if, out_logical_if}]
 ```
 
-The output Interface comes from `bpf_fib_lookup` on the **post-DNAT** destination. No entry → Default Deny (reason `no-ruleset`).
+The output Interface comes from `bpf_fib_lookup` on the **translated** destination when a DNAT candidate matched, on the original destination otherwise. No entry → Default Deny (reason `no-ruleset`).
 
 Zones do not exist in the Data Plane: the Compiler expands each RuleSet into one entry per pair of member Interfaces (a RuleSet from a 2-Interface Zone to a 3-Interface Zone gives 6 entries). DM-07, DM-37 and DM-38 guarantee that every pair maps to at most one RuleSet, so this is a single exact-match lookup with no `any`. Pairs of members of the same Zone with no RuleSet get an entry only if `intraZoneTraffic: allow` (DM-39), pointing to a built-in accept-all RuleSet.
 
@@ -188,14 +189,13 @@ Same approach as Polycube / pcn-iptables, now per RuleSet:
 
 1. The Compiler orders the RuleSet's enabled Policies (disabled ones are omitted): **Policy index within the RuleSet = bit position**.
 2. For each dimension, one lookup returns a **bitmap** of the Policies compatible with that field.
-3. `match = src & dst & svc` (with `MAX_RULES_PER_RULESET = 1024`, 16 `u64` words; value in [ADR-0006](adr/0006-capacity-limits.md)).
+3. `match = src & dst & svc`, computed on the **original** tuple (before any translation) (with `MAX_RULES_PER_RULESET = 1024`, 16 `u64` words; value in [ADR-0006](adr/0006-capacity-limits.md)).
 4. The **first set bit** is the first matching Policy (R-014.4). BPF has no `ctz`: implemented with 6 shift steps or a de Bruijn table.
 5. No bit set → **Default Deny** (R-033).
 
 | Dimension | BPF structure | Precomputation (Go) |
 |---|---|---|
 | Source / destination | `LPM_TRIE`, key `{prefixlen, ruleset_id, addr[16]}` → bitmap. The `ruleset_id` is part of the prefix, so one trie serves all RuleSets | LPM returns only the longest prefix, so each prefix's bitmap also contains the Policies of the prefixes that include it. Address `all` is the IPv4 entry `::ffff:0:0/96`. Ranges are decomposed into CIDRs; groups are the union of their members; InterfaceAddresses is resolved to the Interface's subnets |
-| Destination via VIP | `ARRAY[vip_id]` → bitmap (per RuleSet) | See §7.4 |
 | Service | `ARRAY[65536]` per protocol (TCP, UDP) → `u16 port_class`, then `ARRAY[ruleset][class]` → bitmap | Equivalence classes computed over **all** Policies, so the 64 K arrays are shared by every RuleSet; ICMP uses the same technique on `type`; `any` sets the bit for every class |
 
 Cost per **new** Flow: about 5 lookups and an AND on 16 words, independent of the number of Policies up to the per-RuleSet limit. Established Flows skip the classifier (§9).
@@ -209,21 +209,34 @@ Cost per **new** Flow: about 5 lookups and an AND on 16 words, independent of th
 
 Until designed, the Validator should reject them in Policies.
 
-### 7.4 Virtual IP matching
+### 7.4 DNAT matching (before translation)
 
-A packet translated by VIP `k` matches **only** the Policies whose destinations include VIP `k`; a non-translated packet matches only the non-VIP destinations:
+Decided in [ADR-0010](adr/0010-dnat-in-policy.md): DNAT is the `nat` section of a Policy, and a `dnat` Policy matches the destination and service **before** translation (the public address and port), as written in the YAML.
+
+Routing needs the translated destination (to find the output Interface and therefore the RuleSet), while the Policy is evaluated on the original one. The Compiler breaks this cycle with a **DNAT candidate table** built from every enabled `dnat` Policy:
 
 ```
-dst_bits = dnat_hit ? vip_bits[ruleset][k] : lpm_dst(ruleset, daddr)
+dnat_candidates[{in_logical_if, proto, orig_daddr, orig_dport}] → {dnat_id, ruleset_id, rule_idx, new_daddr, new_dport}
 ```
 
-Without this rule, a Policy with destination `all` would also accept DNAT'ed traffic, and a Policy referencing the VIP's mapped address would accept traffic that reached the internal server without going through the VIP. The Service dimension is evaluated on the **post-DNAT** port (§15).
+DM-41 guarantees that the key is unique. For a new Flow:
+
+1. **Candidate lookup.** No hit → normal path (local-in or forwarding on the original destination).
+2. **Hit** → `bpf_fib_lookup` on the translated destination → output Interface → RuleSet. If it is not the candidate's RuleSet → drop, reason `dnat-route-mismatch`.
+3. **Classify on the original tuple** in that RuleSet.
+4. **Verdict**:
+   - first match is the candidate Policy (`rule_idx`) → accept; the CT entry is flagged `DNAT` with `dnat_id`; TC ingress rewrites the destination;
+   - first match is a `drop` Policy → drop (an earlier drop wins, as written);
+   - first match is another `accept` Policy → drop, reason `dnat-shadowed`. The original destination is the firewall itself, so accepting without translation would deliver nothing useful. The Validator warns about shadowed `dnat` Policies (DM-41);
+   - no match → Default Deny.
+
+The Service dimension is evaluated on the **original** port, consistent with the YAML. The classifier needs no VIP dimension.
 
 ## 8. Atomic update and applied state
 
 Configuration maps are `ARRAY_OF_MAPS` / `HASH_OF_MAPS` with **two generations**; a global variable `active_gen` selects the one in use. The Dataplane Driver builds the inactive generation, verifies it, then switches `active_gen` with a single write. The program reads `active_gen` once per packet, so it always sees a coherent configuration. Rollback switches back (R-020.6).
 
-**Generational** (configuration): RuleSet selection, classifier maps, VIP/DNAT, local-in configuration, egress addresses, blocklist.
+**Generational** (configuration): RuleSet selection, classifier maps, DNAT candidates, local-in configuration, egress addresses, blocklist.
 **Not generational** (state): CT, SNAT reverse table, counters, ring buffer.
 
 Each generation carries a header:
@@ -259,7 +272,7 @@ struct ct_entry {             // 96 bytes
     __u16 flags;              // DIR_REPLY, SEEN_REPLY, SNAT, DNAT, LOCAL_IN, LOCAL_OUT
     __u8  tcp_state;          // SYN_SENT, SYN_RECV, ESTABLISHED, FIN_WAIT, CLOSE
     __u8  pad;
-    __u16 vip_id;
+    __u16 dnat_id;            // entry of the DNAT candidate table, 0 = none
     __be16 nat_port;
     __u8  nat_addr[16];       // translated address applied in TC
     struct ct_key peer;       // key of the other direction
@@ -280,10 +293,10 @@ General rule: **XDP reads, TC writes.** XDP consults the NAT maps to know the re
 
 | Function | Hook | Mechanism |
 |---|---|---|
-| **DNAT** via Virtual IP (R-003) | Lookup in XDP, rewrite in TC ingress | `dnat HASH {ingress logical if, proto, daddr, dport} → {vip_id, mapped addr, mapped port}`. Port ranges are expanded into one entry per port, up to the limit in ADR-0006; a range external→single mapped port maps all to the same port (DM-20) |
+| **DNAT** via the `nat` section of a Policy (R-003) | Candidate lookup and verdict in XDP (§7.4), rewrite in TC ingress | `dnat_candidates` as in §7.4. Port ranges of the original `service` are expanded into one entry per port, up to the limit in ADR-0006; all of them translate to the single `translateServiceTo` port, or keep their port when it is omitted |
 | **SNAT / masquerade** (R-002) | TC egress of the output Interface | Applied when the matched Policy has `nat.mode = interface` (flag stored in CT). Source = primary address of the output Interface (`egress_addr` map). First packet: random port in a range (e.g. 32768–60999) inserted with `BPF_NOEXIST` into `snat_rev`, at most N attempts (same scheme as Cilium). Port space exhausted → drop + counter + event `nat-exhausted` |
 | **Reverse SNAT** | Lookup in XDP, rewrite in TC ingress | `snat_rev {post-SNAT tuple} → original tuple` |
-| **NAT with IpPool** | — | Not designed (domain model allows it; RA has no requirement yet) |
+| **SNAT to an IP pool** (`snat` with `translateIpTo`) | — | Not designed yet (no RA requirement) |
 | **NAT64** | — | Deferred with IPv6 |
 
 ## 11. Events and counters
@@ -309,7 +322,7 @@ struct flow_event {
 ```
 
 - **Matched Policy identifier**: the Event Collector translates `(policy_gen, ruleset_id, rule_idx)` into `(RuleSet name, Policy name)` using the name table of that generation. The Control Plane keeps the tables of the current and the previous generations long enough for in-flight events.
-- **Reasons**: `policy`, `default-deny`, `no-ruleset`, `local-in`, `local-in-deny`, `blocklist`, `malformed`, `fragment`, `ipv6-unsupported`, `nat-exhausted`, `policy-change`.
+- **Reasons**: `policy`, `default-deny`, `no-ruleset`, `local-in`, `local-in-deny`, `blocklist`, `malformed`, `fragment`, `ipv6-unsupported`, `nat-exhausted`, `policy-change`, `dnat-route-mismatch`, `dnat-shadowed`.
 - **Rate limiting** (R-026.1): token bucket per CPU for drop events; drops are always counted; if `bpf_ringbuf_reserve` fails, `events_lost` is incremented.
 - **Counters**: `PERCPU_ARRAY` per Policy (packets, bytes, hits) and per drop reason. They feed `/health`, `/metrics` and the charts (R-032, R-051).
 - **Pseudonymisation** (R-037) is applied in Go by the Event Collector before writing to disk, not in BPF.
@@ -337,15 +350,15 @@ struct flow_event {
 | 1 | Parser: VLAN, IPv4 with IHL, fragments (ADR-0005), interim IPv6 drop, ARP/DHCP exceptions | Malformed and boundary packet suite |
 | 2 | RuleSet lookup, per-RuleSet bitmap classifier, Go compiler "Plan → maps", generation swap with header | Equivalence fuzzing against the Go reference classifier |
 | 3 | Conntrack (TCP/UDP/ICMP, RELATED, timeouts, sweep, ring-buffer events), local-in, local-out, policy change | netns: stateful TCP/UDP, PMTUD, UI reachable only where allowed, DNS forwarder works |
-| 4 | DNAT with VIP matching, SNAT masquerade in TC | netns: port forwarding and masquerade towards a simulated Internet |
+| 4 | DNAT candidates and matching (§7.4), SNAT masquerade in TC | netns: port forwarding and masquerade towards a simulated Internet |
 | 5 | PPPoE path; benchmark; fast path XDP only if needed | Benchmark against R-047 |
-| later | IPv6, NDP, NAT64, `fqdn` and `mac` Addresses, IpPool | — |
+| later | IPv6, NDP, NAT64, `fqdn` and `mac` Addresses, SNAT to an IP pool | — |
 
 ## 15. Open questions
 
 1. **Cross-interface access to local addresses**: with the owner rule, a packet arriving on the WAN but addressed to the LAN address of the firewall is accepted if the LAN allows `https`. On the Internet such a packet is rarely routable, but an on-link attacker (the upstream router) can send it. Proposed safeguard: accept a local-in Flow only if the ingress Interface owns the address, or if the ingress Interface is not `role: wan`. To be decided.
-2. **Management port**: fixed 443, or configurable? If a VIP uses the same external address and port while `https` is allowed on that Interface, one of them must win: proposed DM-35 rejects the collision.
-3. **Service on DNAT'ed traffic**: matched on the post-DNAT port (current design) or on the original port?
+2. **Management port**: configurable in the schema (`System.admin.httpsPort`, default 443). A `dnat` Policy on the same address and port while `https` is allowed on that Interface is rejected by DM-35.
+3. *Resolved by ADR-0010*: Service on translated traffic is matched on the original port.
 4. **`fqdn` and `mac` Addresses**: design them, or remove them from the first release?
 5. **DNAT port ranges**: is expansion with a cap acceptable, or is a range structure needed?
 6. **XDP metadata support** on the reference NIC drivers, and whether it survives to TC on VLAN and `ppp0` devices.
@@ -356,6 +369,6 @@ struct flow_event {
 
 | Document | Change |
 |---|---|
-| Domain model | DM-34 (active services open their ports on the Interface), DM-35 (VIP must not collide with the management port), DM-36 (per-RuleSet Policy limit) |
+| Domain model | DM-34 (active services open their ports on the Interface), DM-35 (DNAT must not collide with the management port), DM-40 and DM-41 (DNAT rules), DM-36 (per-RuleSet Policy limit) |
 | RA | Interim IPv6 behaviour (drop, counted) while R-001.3/R-001.4 are deferred; requirement for administrative access per Interface; Default Deny also for traffic with no RuleSet |
 | components.md | Dataplane Driver owns the CT sweep (emits `FLOW_END`) and reports the applied commit from the generation header |
