@@ -3,9 +3,9 @@
 | | |
 |---|---|
 | **Document** | RA – Requirements Analysis |
-| **Version** | 2.0.1-draft |
+| **Version** | 2.0.2-draft |
 | **Status** | Draft for team review |
-| **Supersedes** | `songbird-requirements-analysis/README.md` (v1, RGFM-style identifiers) |
+| **Supersedes** | 2.0.1-draft. Earlier versions are kept as Git tags (`ra-v1.0`, `ra-v2.0.0`, `ra-v2.0.1`), see §12 |
 | **License** | AGPL-3.0 |
 
 ---
@@ -20,7 +20,7 @@ It is the input for the Project Plan, the Architectural Design and the Test Plan
 ### 1.2 Scope of the product
 Songbird is a software appliance (immutable Linux OS image + control-plane application + eBPF data plane) that provides, on commodity x86-64 hardware or virtual machines:
 
-- stateful packet filtering, static routing and NAT (IPv4/IPv6, NAT64);
+- stateful packet filtering, static routing and NAT for IPv4 (IPv6 and NAT64 are planned after release 1.0, see R-001.3, R-006, R-057);
 - essential network services for a small/medium network: DHCP, DNS;
 - a web-based management interface and a declarative YAML configuration kept under version control;
 - observability (traffic log, metrics, health) and auditing.
@@ -31,9 +31,9 @@ Out of scope for the first releases (see §8 – Excluded requirements): VPN ter
 Project team (design, development, test), external reviewers, early adopters evaluating the product roadmap.
 
 ### 1.4 References
-- `songbird-architecture/dataplane.md` – exploratory eBPF data-plane design (consumes R-001…R-003, R-005, R-006, R-010…R-014, R-026, R-033, C-001).
-- `songbird-yaml-schema/` – configuration schema draft.
-- `songbird-prototypes/` – proof-of-concept code (XDP firewall, Hadron OS image, Go feasibility study).
+- `songbird-architecture/` – architectural design: `domain-model.md` (configuration objects and constraints `DM-NN`), `components.md` (components and the requirement → component matrix), `reconciliation.md`, `dataplane.md` (eBPF Data Plane), `adr/` (Architecture Decision Records).
+- `songbird-yaml-schema/` – configuration schema (`v1alpha1`) and validator prototype.
+- `songbird-prototypes/` – proof-of-concept code (XDP firewall, Hadron OS image, Go feasibility study, Web UI with a Control Plane slice).
 - RFC 2131 (DHCP), RFC 8415 (DHCPv6), RFC 4861 (NDP), RFC 4862 (SLAAC), RFC 6146 (NAT64), RFC 6147 (DNS64), RFC 6238 (TOTP), RFC 8555 (ACME), RFC 5798 (VRRP), RFC 4035 (DNSSEC).
 
 ---
@@ -59,20 +59,20 @@ Terms are capitalised in the requirement text when used in the sense defined her
 | **Physical Interface** | A network device backed by a NIC (e.g. `eth0`, `enp1s0`). |
 | **Logical Interface** | A network device derived from a Physical Interface, in particular an 802.1Q VLAN sub-interface (e.g. `eth0.10`) or a PPPoE device. |
 | **Interface** | Either a Physical or a Logical Interface. |
-| **Zone** | A named, user-defined set of Interfaces. Policies may reference Zones instead of single Interfaces. An Interface belongs to at most one Zone. |
+| **Zone** | A named, user-defined set of Interfaces. RuleSets may reference Zones instead of single Interfaces. An Interface belongs to at most one Zone, and is then referenced through its Zone, except between two Interfaces of the same Zone. |
+| **RuleSet** | The ordered list of Policies for traffic entering from one Interface or Zone and leaving through another. There is at most one RuleSet per ordered pair; the wildcard *any* is not allowed. |
 | **Address** | A named configuration object representing an IPv4/IPv6 subnet in CIDR notation, an inclusive IP range, an FQDN, or a MAC address. |
 | **Address Group** | A named, ordered list of Addresses and/or other Address Groups. |
 | **Service** | A named configuration object representing an L4 protocol (TCP, UDP, ICMP, ICMPv6, or an IP protocol number) with an optional port or port range. |
 | **Service Group** | A named list of Services and/or other Service Groups. |
-| **Policy** (firewall rule) | An ordered matching rule with the fields: incoming Interface/Zone, outgoing Interface/Zone, Source, Destination, Service, Action. Policies are evaluated in order; the first match wins. |
+| **Policy** (firewall rule) | An ordered matching rule inside a RuleSet, with the fields Source, Destination, Service, Action and an optional NAT section. Its incoming and outgoing Interface or Zone are those of the RuleSet. Policies are evaluated in order within their RuleSet; the first match wins. |
 | **Action** | The verdict of a Policy: `accept` or `drop`. |
-| **Default Deny** | The implicit Policy applied when no explicit Policy matches a Flow: `drop` + log. |
+| **Default Deny** | The implicit verdict applied when no RuleSet exists for the Interfaces of a Flow, or no explicit Policy in it matches: `drop` + log. |
 | **Flow** (session, connection) | A bidirectional sequence of packets identified by the 5-tuple (source address, destination address, source port, destination port, protocol) plus the Interface of first observation. |
 | **Stateful** | Property of the filter whereby reply packets belonging to an accepted Flow are accepted without re-evaluating Policies. |
 | **Connection Tracking (conntrack)** | The data structure and logic that keeps the state of active Flows. |
-| **SNAT / Masquerade** | Source address (and port) translation applied to outgoing Flows, typically to the address of the outgoing Interface. |
-| **DNAT / Port Forwarding** | Destination address (and port) translation applied to incoming Flows, typically to publish an internal server. |
-| **Virtual IP (VIP)** | A named configuration object describing a DNAT mapping (external address:port → internal address:port). |
+| **SNAT / Masquerade** | Source address (and port) translation applied to outgoing Flows, typically to the address of the outgoing Interface. Configured in the NAT section of a Policy. |
+| **DNAT / Port Forwarding** | Destination address (and port) translation applied to incoming Flows, typically to publish an internal server. Configured in the NAT section of a Policy, which matches the destination and service **before** translation (the public address and port). |
 | **NAT64 / DNS64** | Translation mechanisms allowing IPv6-only clients to reach IPv4-only servers (RFC 6146 / RFC 6147). |
 | **Data Plane** | The component that inspects, filters, translates and forwards packets. In Songbird it is implemented with eBPF programs in the Linux kernel (see Constraint C-001). |
 | **Control Plane** | The user-space component that manages configuration, compiles it into Data Plane state, runs network services and exposes the API/UI. |
@@ -87,7 +87,7 @@ Terms are capitalised in the requirement text when used in the sense defined her
 | **Subsystem** | A major runtime component with its own health status: Data Plane, DHCP, DNS, GitOps, API/UI, Alerting. |
 | **User** | A local administrative account of the appliance. |
 | **Role** | A named set of permissions assigned to Users (e.g. `admin`, `read-only`). |
-| **Colour** | A named palette entry with a fixed colour value and a user-defined meaning, used to visually classify related configuration objects (e.g. "green = Backup"). Every configuration object may reference at most one Colour. |
+| **Color** | A named palette entry with a fixed colour value and a user-defined meaning, used to visually classify related configuration objects (e.g. "green = Backup"). Every configuration object may reference at most one Color. |
 | **Initial Setup** | The state of an appliance that boots without a valid Configuration. |
 | **A/B Update** | An update model with two system partitions: the new image is written to the inactive one and activated at reboot; failure rolls back to the previous one. |
 | **Hot Reload** | Replacing a running Data Plane program with a new version without interrupting packet processing. |
@@ -157,17 +157,21 @@ Ordered by identifier. **Scope**: U/G. **Type**: F/N. **Pri**: M/S/C.
 | **R-001** | G | F | M | – | The system shall forward IP packets between Interfaces according to a statically configured routing table. | **T-I** – netns topology with three Interfaces and static routes; `ping`/`iperf3` between any pair succeeds; traffic to an unrouted prefix is not forwarded. |
 | R-001.1 | G | F | M | – | The system shall forward IPv4 packets between distinct Physical Interfaces. | **T-I** – as R-001, IPv4, veth as Physical Interfaces. |
 | R-001.2 | G | F | M | – | The system shall forward IPv4 packets between distinct Logical Interfaces. | **T-I** – as R-001, IPv4, 802.1Q sub-interfaces on the same veth. |
-| R-001.3 | G | F | M | – | The system shall forward IPv6 packets between distinct Physical Interfaces. | **T-I** – as R-001.1, IPv6. |
-| R-001.4 | G | F | M | – | The system shall forward IPv6 packets between distinct Logical Interfaces. | **T-I** – as R-001.2, IPv6. |
+| R-001.3 | G | F | S | – | The system shall forward IPv6 packets between distinct Physical Interfaces. | **T-I** – as R-001.1, IPv6. |
+| R-001.4 | G | F | S | – | The system shall forward IPv6 packets between distinct Logical Interfaces. | **T-I** – as R-001.2, IPv6. |
+| R-001.5 | G | F | M | Reliability | The system shall accept several static routes to the same destination, each with a distance and a priority; the active route shall be the one with the lowest distance, then the lowest priority, among those whose outgoing Interface is up. | **T-I** – two routes to the same prefix with different distances; traffic follows the lower distance; bring its outgoing Interface down; traffic follows the other route. |
 | **R-002** | G | F | M | – | The system shall support Source NAT (Masquerade) of accepted Flows to the address of the outgoing Interface. | **T-I** – client behind SNAT reaches server; `tcpdump` on server shows the firewall's egress address; reply packets reach the client. TCP, UDP and ICMP echo. |
-| **R-003** | G | F | M | – | The system shall support Destination NAT (Port Forwarding) via Virtual IP objects. | **T-I** – external client connects to VIP address:port; connection is delivered to internal address:port; reply is translated back. |
-| **R-004** | G | F | M | Interoperability | On each Interface configured in *router advertisement* mode, the system shall send ICMPv6 Router Advertisements enabling SLAAC (RFC 4862) for the configured prefix. | **T-I** – host in the LAN netns with `accept_ra=1` obtains a global address in the configured prefix within 10 s. |
-| **R-005** | G | F | M | Interoperability | The system shall participate in IPv6 Neighbor Discovery (RFC 4861) on all configured Interfaces, and shall never drop NDP messages because of Policies. | **T-I** – with a Default-Deny-only Policy set, `ndisc6`/`ping6` to the firewall's link-local address succeeds; neighbor cache entries are created on both sides. |
-| **R-006** | G | F | M | Interoperability | The system shall implement stateful NAT64 (RFC 6146). | **T-I** – IPv6-only client reaches an IPv4-only server through the NAT64 prefix (TCP and UDP). |
-| R-006.1 | G | F | M | Interoperability | The NAT64 prefix shall be configurable. | **T-I** – Configuration with a custom /96 prefix; R-006 test passes using that prefix. |
-| R-006.2 | G | F | M | Interoperability | The default NAT64 prefix shall be `64:ff9b::/96`. | **T-U** – Configuration without explicit prefix; the compiled Data Plane state contains `64:ff9b::/96`. |
+| **R-003** | G | F | M | – | The system shall support Destination NAT (Port Forwarding) configured in the NAT section of a Policy, which matches the destination and service before translation. | **T-I** – external client connects to the public address:port of a `dnat` Policy; connection is delivered to the translated address:port; reply is translated back; a Flow to the same address on another port is not translated. |
+| **R-004** | G | F | S | Interoperability | On each Interface configured in *router advertisement* mode, the system shall send ICMPv6 Router Advertisements enabling SLAAC (RFC 4862) for the configured prefix. | **T-I** – host in the LAN netns with `accept_ra=1` obtains a global address in the configured prefix within 10 s. |
+| **R-005** | G | F | S | Interoperability | The system shall participate in IPv6 Neighbor Discovery (RFC 4861) on all configured Interfaces, and shall never drop NDP messages because of Policies. | **T-I** – with a Default-Deny-only Policy set, `ndisc6`/`ping6` to the firewall's link-local address succeeds; neighbor cache entries are created on both sides. |
+| **R-006** | G | F | S | Interoperability | The system shall implement stateful NAT64 (RFC 6146). | **T-I** – IPv6-only client reaches an IPv4-only server through the NAT64 prefix (TCP and UDP). |
+| R-006.1 | G | F | S | Interoperability | The NAT64 prefix shall be configurable. | **T-I** – Configuration with a custom /96 prefix; R-006 test passes using that prefix. |
+| R-006.2 | G | F | S | Interoperability | The default NAT64 prefix shall be `64:ff9b::/96`. | **T-U** – Configuration without explicit prefix; the compiled Data Plane state contains `64:ff9b::/96`. |
+| **R-057** | G | F | M | Security | While IPv6 forwarding (R-001.3, R-001.4) is not implemented, the system shall drop and count IPv6 packets, and shall never forward them unfiltered. | **T-I** – IPv6 traffic between two netns through the firewall is not delivered; the drop counter for IPv6 increases. |
 
 > **Note (v2):** v1 had NAT64 as three separate top-level requirements (RGFM6/7/8). They are merged under R-006 as refinements.
+>
+> **Note (v2.0.2):** IPv6 is planned after release 1.0. R-001.3, R-001.4, R-004, R-005, R-006 and its refinements, R-017.4 and R-018.6 are lowered from M to S; R-057 states the interim behaviour. To be confirmed (open issue #9).
 
 ### 6.2 Configuration objects and Policies
 
@@ -175,18 +179,25 @@ Ordered by identifier. **Scope**: U/G. **Type**: F/N. **Pri**: M/S/C.
 |---|---|---|---|---|---|---|
 | **R-009** | U | F | M | Usability | The user interface shall allow the creation, modification, deletion and reordering of Policies. | **T-S** – browser test: create, edit, move and delete a Policy; resulting YAML and running Data Plane state match. |
 | R-009.1 | U | F | M | Usability | The user interface shall prevent saving a Policy while a mandatory field without a default value is empty. | **T-S** – attempt to save with empty Source: save is refused and the field is highlighted; no YAML is written. |
+| R-009.2 | U | F | S | Usability | The user interface shall allow disabling and re-enabling a Policy without deleting it. | **T-S** – disable a Policy; matching traffic follows the next Policy; the YAML keeps the Policy with `enabled: false`. |
 | **R-010** | G | F | M | – | The system shall define a Service as an L4 protocol with an optional port or inclusive port range. | **T-U** – Schema accepts `{tcp, 443}`, `{udp, 10000-20000}`, `{icmp}`; rejects `{tcp}` without port and `{tcp, 70000}`. |
 | **R-011** | G | F | M | – | The system shall define a Service Group as a list of Services and/or Service Groups, with cycles rejected. | **T-U** – Schema/validator accepts nested groups; rejects a group that references itself directly or indirectly. |
 | **R-012** | G | F | M | – | The system shall define an Address as either a CIDR subnet (IPv4 or IPv6) or an inclusive IP range. | **T-U** – validator accepts `192.168.0.0/24`, `10.0.0.1/32`, `2001:db8::/64`, `172.16.1.1-172.16.1.254`; rejects an inverted range and a mixed-family range. |
 | **R-013** | G | F | M | – | The system shall define an Address Group as a list of Addresses and/or Address Groups, with cycles rejected. | **T-U** – as R-011 for Addresses. |
-| **R-014** | G | F | M | – | The system shall define a Policy by the fields: incoming Interface or Zone, outgoing Interface or Zone, Source, Destination, Service, Action. | **T-U** – Schema rejects a Policy missing any of the six fields (except where a default exists); **T-I** – a Policy with all six fields produces the expected verdict on matching and non-matching traffic. |
+| **R-014** | G | F | M | – | The system shall define a Policy, inside a RuleSet, by the fields Source, Destination, Service and Action; its incoming and outgoing Interface or Zone are those of the RuleSet. | **T-U** – Schema rejects a Policy missing any of the four fields (except where a default exists); **T-I** – a Policy with all fields produces the expected verdict on matching and non-matching traffic. |
 | R-014.1 | G | F | M | – | A Policy shall accept an Address or Address Group as Source. | **T-I** – Policy with a Group as Source accepts traffic from every member and drops traffic from a non-member. |
 | R-014.2 | G | F | M | – | A Policy shall accept an Address or Address Group as Destination. | **T-I** – as R-014.1 for Destination. |
 | R-014.3 | G | F | M | – | A Policy shall accept a Service or Service Group as Service. | **T-I** – Policy with a Group as Service accepts every member port and drops a non-member port. |
 | R-014.4 | G | F | M | – | Policies shall be evaluated in the configured order and the first matching Policy shall determine the verdict. | **T-I** – two overlapping Policies (drop then accept, and the reverse); the verdict follows the first. **T-U** – fuzz test: eBPF classifier vs. reference Go classifier give identical verdicts. |
+| R-014.5 | G | F | M | – | A RuleSet shall be defined by an incoming and an outgoing Interface or Zone, different from each other; at most one RuleSet shall exist per ordered pair, and the wildcard *any* shall not be accepted. | **T-U** – validator rejects a second RuleSet for the same pair, a RuleSet with equal sides, and `any`. |
+| **R-046** | G | F | M | – | Zones shall be definable as named sets of Interfaces, an Interface belonging to at most one Zone, and RuleSets shall accept a Zone wherever an Interface is accepted. | **T-U** – Schema; **T-I** – RuleSet from Zone `internal` (`lan1`, `lan2`) to `wan1` matches traffic from both members. |
+| R-046.1 | G | F | M | – | An Interface that belongs to a Zone shall be referenced through its Zone, except in a RuleSet between two different Interfaces of the same Zone. | **T-U** – validator rejects `lan1 → wan1` when `lan1` is in a Zone; accepts `lan1 → lan2` when both are in the same Zone; rejects `internal → internal`. |
+| R-046.2 | G | F | S | – | For traffic between two Interfaces of the same Zone with no RuleSet between them, the Zone shall define whether it is accepted or denied, with deny as default. | **T-I** – Zone with default setting: `lan1 → lan2` is dropped; with *allow*: accepted; both produce Flow Events. *(To be confirmed, open issue #10.)* |
 | **R-015** | U | F | M | Usability | The user interface shall present Interfaces as a hierarchical tree, with Logical Interfaces nested under their Physical Interface. | **T-S** – with `eth0` and `eth0.10`, `eth0.20` present, the tree shows two children under `eth0`. |
 | R-015.1 | U | F | M | Usability | The Interface tree shall reflect the addition or removal of a Logical Interface within 5 s of the kernel event. | **T-S** – add a VLAN sub-interface via netlink; the tree shows it within 5 s (measured by browser automation). |
 
+> **Note (v2.0.2):** R-014 now describes the Policy inside its RuleSet; the Interface/Zone fields moved to the RuleSet (R-014.5). R-046 was accepted from §7 and refined (R-046.1, R-046.2).
+>
 > **R-014.3 and R-014.4 are new in v2**: v1 defined Service Groups (RGFM11) but never stated they are usable in Policies, and never stated the first-match semantics on which the whole classifier design relies.
 
 ### 6.3 Network services
@@ -197,14 +208,14 @@ Ordered by identifier. **Scope**: U/G. **Type**: F/N. **Pri**: M/S/C.
 | R-017.1 | G | F | M | Interoperability | The DHCP server shall allow configuration of the lease duration. | **T-I** – lease time in the OFFER/ACK equals the configured value. |
 | R-017.2 | G | F | M | Interoperability | The DHCP server shall allow static address assignment based on client MAC address. | **T-I** – client with reserved MAC always receives the reserved address. |
 | R-017.3 | G | F | M | Reliability | The DHCP server shall serve independent pools per Interface, with no address leaking between pools. | **T-I** – two LAN netns, two pools; each client gets an address from its own Interface's pool. |
-| R-017.4 | G | F | M | Interoperability | The system shall support DHCPv6 (RFC 8415) including Prefix Delegation as a client on the WAN Interface and as a server on LAN Interfaces. | **T-I** – upstream netns runs a DHCPv6-PD server; Songbird obtains a delegated prefix and advertises a sub-prefix on the LAN. |
+| R-017.4 | G | F | S | Interoperability | The system shall support DHCPv6 (RFC 8415) including Prefix Delegation as a client on the WAN Interface and as a server on LAN Interfaces. | **T-I** – upstream netns runs a DHCPv6-PD server; Songbird obtains a delegated prefix and advertises a sub-prefix on the LAN. |
 | **R-018** | G | F | M | Interoperability | The system shall provide a local DNS server. | **T-I** – `dig @songbird` resolves an external name. |
 | R-018.1 | G | F | M | Interoperability | In *Forwarder* mode, the DNS server shall cache positive answers and forward unresolved queries to the configured upstream servers. | **T-I** – second identical query is answered with no upstream traffic (observed with `tcpdump` on the upstream link). |
 | R-018.2 | G | F | M | Interoperability | The DNS server shall resolve locally defined hostnames. | **T-I** – `dig host.lan` returns the configured address. |
 | R-018.3 | G | F | S | Security | The DNS server shall be switchable from Forwarder mode to *Recursive* mode. | **T-I** – Configuration change; the server answers by querying root/TLD servers (observed on the upstream link) instead of the forwarders. |
 | R-018.4 | G | F | S | Security | In Recursive mode, the DNS server shall resolve queries by iterating from the root hints to the authoritative servers. | **T-I** – as R-018.3 (same evidence). |
 | R-018.5 | G | F | S | Integrity | In Recursive mode, the DNS server shall validate DNSSEC and shall return SERVFAIL for answers that fail validation. | **T-I** – query a known-bad DNSSEC test domain → SERVFAIL; a signed valid domain → answer with AD flag. |
-| R-018.6 | G | F | M | Interoperability | The system shall provide DNS64 (RFC 6147) synthesising AAAA records for IPv4-only names, consistent with the NAT64 prefix. | **T-I** – `dig AAAA` of an A-only name returns an address inside the NAT64 prefix. |
+| R-018.6 | G | F | S | Interoperability | The system shall provide DNS64 (RFC 6147) synthesising AAAA records for IPv4-only names, consistent with the NAT64 prefix. | **T-I** – `dig AAAA` of an A-only name returns an address inside the NAT64 prefix. |
 | **R-034** | G | N | S | Reliability | The system shall fail over to the secondary upstream DNS server after 3 consecutive timeouts of the primary. | **T-I** – black-hole the primary; 4th query is answered by the secondary. |
 | R-034.1 | G | N | S | Reliability | Failover shall complete within 5 s of detecting the primary timeout, without failing in-flight queries. | **T-I** – as R-034, timing measured; no SERVFAIL returned to the client. |
 
@@ -217,7 +228,7 @@ Ordered by identifier. **Scope**: U/G. **Type**: F/N. **Pri**: M/S/C.
 | R-020.1 | G | F | M | Maintainability | The complete Configuration shall be exportable as a set of YAML files, and exporting then importing shall yield an identical Configuration. | **T-U** – round-trip test: export → import → export; byte-identical except for ordering-insensitive fields. |
 | R-020.2 | G | F | M | Maintainability | Every Configuration file shall be validated against the Schema before Apply. | **T-U** – corpus of valid/invalid YAML files; validator result matches the expected label for 100% of the corpus. |
 | R-020.3 | G | F | M | Maintainability | A Configuration that fails validation shall not be applied, and the error shall identify the file, path and reason. | **T-U** – invalid file → non-zero exit, error message contains `file:line` and the failing JSON-path. **T-S** – UI shows the same error. |
-| R-020.4 | G | F | M | Maintainability | The Configuration shall include an `interfaces` section defining Physical Interfaces, IPv4/IPv6 addressing, and 802.1Q VLAN sub-interfaces. | **T-U** – Schema accepts the reference `interfaces` document; rejects an undefined parent for a VLAN. |
+| R-020.4 | G | F | M | Maintainability | The Configuration shall include an `interfaces` section defining Physical Interfaces, IPv4 addressing and 802.1Q VLAN sub-interfaces (IPv6 addressing follows R-001.3). | **T-U** – Schema accepts the reference `interfaces` document; rejects an undefined parent for a VLAN. |
 | R-020.5 | G | F | M | Security | Secrets in the Configuration (e.g. Repository SSH keys, API tokens, SMTP passwords) shall be stored encrypted at rest. | **I** – no plaintext secret in exported YAML (grep for known test secret); **A** – encryption scheme reviewed (AEAD, key not stored alongside data). |
 | R-020.6 | G | F | M | Reliability | Apply shall be atomic: if any part of a new Configuration fails to activate, the system shall restore the previous running state completely. | **T-I** – Configuration where the last block is deliberately unapplicable (e.g. duplicate address); after Apply, Data Plane and kernel state equal a snapshot taken before. |
 | **R-021** | U | F | S | Interoperability, Flexibility | Every Configuration change saved through the user interface shall produce a Git commit in the local Repository with a structured message (author, timestamp, summary of changed objects). | **T-S** – after a UI change, `git log -1` shows the commit with the expected message structure and the diff touches only the changed objects. |
@@ -225,9 +236,10 @@ Ordered by identifier. **Scope**: U/G. **Type**: F/N. **Pri**: M/S/C.
 | R-021.2 | G | F | S | Reliability | If push fails, the system shall retry every 60 s and shall display a notification banner in the user interface until the push succeeds. | **T-S** – make the remote unreachable; banner appears; restore the remote; push succeeds at the next retry and the banner disappears. |
 | R-021.3 | G | F | S | Security | The system shall authenticate to remote Repositories with SSH private keys. | **T-S** – push to an SSH remote with key auth succeeds; with a wrong key it fails and R-021.2 applies. |
 | R-021.4 | G | F | S | Security | The system shall authenticate to remote Repositories with HTTPS personal access tokens. | **T-S** – as R-021.3 with a token (e.g. Gitea in CI). |
+| R-021.5 | U | F | S | Integrity | When two changes are saved from the same Configuration revision, the second shall be merged automatically if it affects different objects, and otherwise rejected with a conflict showing the current version; no change shall be lost silently. | **T-S** – two browser sessions edit the same object and save; the second save is refused with a conflict; editing different objects, both saves are committed. |
 | **R-031** | G | F | M | Usability | When booting in Initial Setup, the system shall expose a minimal HTTPS setup wizard sufficient to define the first admin User and the LAN/WAN Interfaces. | **T-S** – fresh image boots; wizard reachable; after completion a valid Configuration exists and the full UI is available. |
 | R-031.1 | G | F | S | Security | During Initial Setup, the user interface shall accept connections only from Interfaces designated as internal (LAN). | **T-S** – connection attempt from the WAN netns is refused; from the LAN netns succeeds. |
-| **R-033** | G | F | M | Security | When no explicit Policy matches a Flow, the system shall apply Default Deny: drop the packet and record a Traffic Log event. | **T-I** – with an empty Policy set, any forwarded traffic is dropped and a `FLOW_DROP` event with reason `default-deny` is produced. |
+| **R-033** | G | F | M | Security | When no RuleSet exists for the Interfaces of a Flow, or no explicit Policy in it matches, the system shall apply Default Deny: drop the packet and record a Traffic Log event. | **T-I** – with an empty Policy set, any forwarded traffic is dropped and a `FLOW_DROP` event with reason `default-deny` is produced. |
 | R-033.1 | G | F | S | Reliability | After an unexpected Control Plane crash or a reboot, the system shall restore the last valid running Configuration within 30 s, without manual intervention. | **T-S** – `kill -9` the Control Plane and, separately, reboot the VM; forwarding according to the last Configuration is restored within 30 s (traffic probe at 1 s intervals). |
 | **R-036** | G | N | C | Maintainability | The system shall support Hot Reload of Data Plane programs without restarting the Control Plane. | **T-I** – trigger a program update while traffic flows; Control Plane PID unchanged. |
 | R-036.1 | G | N | C | Maintainability | Hot Reload shall complete within 2 s with zero packet loss. | **T-P** – constant-rate UDP stream during Hot Reload; receiver counts zero missing sequence numbers. |
@@ -292,6 +304,7 @@ Ordered by identifier. **Scope**: U/G. **Type**: F/N. **Pri**: M/S/C.
 | R-038.2 | G | F | S | Security | The system shall obtain and renew TLS certificates via ACME (RFC 8555) with the HTTP-01 challenge. | **T-S** – against Pebble (ACME test server) in CI; a valid certificate is installed. |
 | R-038.3 | G | F | S | Security | The system shall obtain and renew TLS certificates via ACME with the DNS-01 challenge, for at least one DNS provider API. | **T-S** – Pebble with its challenge test server. |
 | R-038.4 | G | N | S | Reliability | The system shall check certificate validity daily and renew when fewer than 30 days remain. | **T-S** – install a certificate expiring in 20 days; after the daily check a renewal request is observed. |
+| **R-056** | G | F | M | Security | The system shall allow configuring, per Interface, which management services of the firewall itself (at least HTTPS management and ICMP echo) are reachable through the addresses of that Interface, with none enabled by default. | **T-I** – with HTTPS enabled only on LAN, the UI answers on the LAN address and not on the WAN address, from any client; ping follows its own setting. |
 | **R-043** | U | F | M | Security | The user interface and API shall require authentication before exposing any functionality other than the login form and `/health`. | **T-S** – every API route except login and `/health` returns 401 without a session. |
 | R-043.1 | U | F | M | Security | The system shall support local Users with passwords hashed with bcrypt, cost factor ≥ 12. | **T-U** – stored hash is a bcrypt hash with cost ≥ 12; **A** – code review of the hashing path. |
 | R-043.2 | U | F | M | Security | After 5 consecutive failed login attempts from the same source address, further attempts from that address shall be refused for 10 min. | **T-S** – 5 wrong passwords → 6th attempt (correct password) refused with 429/423; succeeds after 10 min (clock-skewed test). |
@@ -314,19 +327,21 @@ Ordered by identifier. **Scope**: U/G. **Type**: F/N. **Pri**: M/S/C.
 |---|---|---|---|---|---|---|
 | **R-044** | U | F | C | Usability | The user interface shall offer a dark colour theme. | **T-S** – toggle; computed background colour of the body changes to the dark palette. |
 | R-044.1 | U | F | C | Usability | The theme toggle shall be reachable from every page. | **T-S** – browser automation visits every route; toggle is present. |
+| **R-055** | U | F | S | Usability | The system shall provide a palette of named Colors, each with a fixed colour value and a user-defined meaning (e.g. "green = Backup/Veeam", "blue = main LAN", "red = DMZ"), and every configuration object shall be assignable to at most one Color, so that related objects are visually classified consistently across the user interface. | **T-S** – assign the same Color to an Address, a Service and a Zone; all three render with that colour in every list view; the palette legend shows the Color with its meaning. **T-U** – validator rejects a reference to an undefined Color. |
+| R-055.1 | U | F | S | Usability | The system shall ship a predefined palette whose colour values cannot be changed; users shall be able to set or edit the meaning of each predefined Color. | **T-U** – validator rejects a predefined Color with a modified colour value; accepts a modified meaning. |
+| R-055.2 | U | F | S | Usability | Users shall be able to define additional Colors with their own colour value and meaning; two Colors shall not share the same colour value. | **T-U** – validator accepts a new Color; rejects a second Color with a duplicate colour value. **T-S** – new Color appears in the UI palette and is assignable. |
 
 ---
 
 ## 7. Proposed additions (to be discussed by the team)
 
-The following requirements are **not** part of v1. They are proposed because the architecture (`dataplane.md`) or the product goal (FortiGate-like simplicity) implicitly depends on them. They are listed with a suggested priority; accept, modify or reject them explicitly.
+The following requirements are **not** part of v1. They are proposed because the architecture (`dataplane.md`) or the product goal (FortiGate-like simplicity) implicitly depends on them. They are listed with a suggested priority; accept, modify or reject them explicitly. R-046 and R-055 were accepted in 2.0.2 and moved to §6.2 and §6.9.
 
 | ID | Scope | Type | Pri | Quality | Proposed requirement | Verification |
 |---|---|---|---|---|---|---|
 | **R-045** | G | F | M | – | The system shall be Stateful: reply packets of an accepted Flow shall be forwarded without re-evaluating Policies, and packets that do not belong to an accepted Flow and do not match an accept Policy shall be dropped. | **T-I** – TCP connection accepted LAN→WAN; SYN-ACK from WAN is forwarded with no WAN→LAN Policy; an unsolicited WAN→LAN SYN is dropped. |
 | R-045.1 | G | F | M | – | The system shall treat ICMP/ICMPv6 error messages whose embedded header refers to an active Flow as part of that Flow (RELATED). | **T-I** – Path MTU Discovery works across the firewall with a reduced-MTU link downstream. |
 | R-045.2 | G | N | M | Performance | Flow timeouts shall be configurable, with defaults: TCP established 3600 s, TCP handshake 30 s, TCP closing 10 s, UDP 60 s (180 s bidirectional), ICMP 30 s. | **T-U** – default values present in compiled state; **T-I** – idle UDP Flow expires after the configured time. |
-| **R-046** | G | F | M | – | Zones shall be definable as named sets of Interfaces, and Policies shall accept a Zone wherever an Interface is accepted. | **T-U** – Schema; **T-I** – Policy on Zone `lan` matches traffic from every member Interface. |
 | **R-047** | G | N | M | Performance | On the reference platform (C-003), the system shall forward at least **1 Mpps** of accepted 64-byte UDP packets per CPU core with 1 000 Policies configured. | **T-P** – TRex/pktgen, 1 000 Policies, measured throughput ≥ target. *(Target value to be agreed.)* |
 | **R-048** | G | N | M | Performance | The system shall support at least **1 000 000** concurrent Flows and **4 096** Policies without degradation of R-047 by more than 20%. | **T-P** – fill conntrack to the limit; re-run R-047. *(Values to be agreed.)* |
 | **R-049** | G | N | M | Performance | The additional forwarding latency introduced by the Data Plane shall be below **50 µs** at the 99th percentile under 50% of the R-047 load. | **T-P** – hardware timestamping or TRex latency stream. |
@@ -335,9 +350,6 @@ The following requirements are **not** part of v1. They are proposed because the
 | **R-052** | G | F | S | Maintainability | The system shall provide a command-line tool `songbird validate <dir>` that validates a Configuration directory against the Schema and exits non-zero on error, usable in CI pipelines independently of the appliance. | **T-U** – corpus test as R-020.2 through the CLI. |
 | **R-053** | G | F | M | Security | Policies shall be able to drop IPv4 packets that are not initial fragments, as a configurable behaviour (default: drop). | **T-I** – fragmented UDP datagram; with default settings non-initial fragments are dropped and counted. *(Resolves `dataplane.md` open question 4.)* |
 | **R-054** | G | F | S | Security | When a Policy change no longer permits an active Flow, the Flow shall be terminated at its next packet. | **T-I** – long-lived TCP Flow; change Policy to drop; next segment is dropped and a `FLOW_END` event with reason `policy-change` is emitted. *(Resolves `dataplane.md` open question 3; FortiGate default behaviour.)* |
-| **R-055** | U | F | S | Usability | The system shall provide a palette of named Colours, each with a fixed colour value and a user-defined meaning (e.g. "green = Backup/Veeam", "blue = main LAN", "red = DMZ"), and every configuration object shall be assignable to at most one Colour, so that related objects are visually classified consistently across the user interface. | **T-S** – assign the same Colour to an Address, a Service and a Zone; all three render with that colour in every list view; the palette legend shows the Colour with its meaning. **T-U** – validator rejects a reference to an undefined Colour. |
-| R-055.1 | U | F | S | Usability | The system shall ship a predefined palette whose colour values cannot be changed; users shall be able to set or edit the meaning of each predefined Colour. | **T-U** – validator rejects a predefined Colour with a modified colour value; accepts a modified meaning. |
-| R-055.2 | U | F | S | Usability | Users shall be able to define additional Colours with their own colour value and meaning; two Colours shall not share the same colour value. | **T-U** – validator accepts a new Colour; rejects a second Colour with a duplicate colour value. **T-S** – new Colour appears in the UI palette and is assignable. |
 
 ---
 
@@ -353,6 +365,7 @@ Listed to make the scope boundary explicit. Each may be reconsidered in a future
 | **W-004** | SD-WAN, multi-WAN policy routing. | Out of scope for release 1.0. |
 | **W-005** | Centralised management of multiple appliances. | The GitOps model (one Repository, many appliances) partially covers it already. |
 | **W-006** | Captive portal. | Out of scope. |
+| **W-007** | Policies within a single Interface (incoming = outgoing) and hairpin NAT. | A RuleSet requires two different Interfaces or Zones (R-014.5). Hairpin access to a published server can be replaced by internal DNS resolving it to its private address. |
 
 ---
 
@@ -437,11 +450,23 @@ Listed to make the scope boundary explicit. Each may be reconsidered in a future
 
 | # | Issue | Owner | Proposed resolution |
 |---|---|---|---|
-| 1 | Numeric targets of R-047/R-048/R-049 and the reference platform C-003. | Team | Decide after a first benchmark of the PoC on the intended hardware. |
-| 2 | Acceptance of proposed R-045…R-054. | Team | Review meeting; each proposal accepted/rejected with a one-line rationale in this section. |
-| 3 | Does C-001 exclude `nf_conntrack` kfuncs, or only the iptables/nftables rule engines? (`dataplane.md` open question 2.) | Team | Current wording of C-001 excludes only the rule engines; confirm or tighten. |
-| 4 | Whether Policy fields may be `any` for Interface/Zone. The YAML schema draft groups Policies by (incoming, outgoing) pair; allowing `any` breaks the per-pair ordering model. | Team | Propose: Interface/Zone fields are mandatory and not `any`; use a Zone containing all Interfaces when needed. |
-| 5 | Multi-user concurrent editing in the UI (two admins saving at once). Not covered by any requirement. | Team | Propose a requirement on optimistic locking or last-writer-wins with Audit Log evidence. |
+| 1 | Numeric targets of R-047/R-048/R-049 and the reference platform C-003. | Team | Decide after a first benchmark of the PoC on the intended hardware (ADR-0006, ADR-0007). |
+| 2 | Acceptance of proposed R-045, R-047…R-054 (R-046 and R-055 accepted in 2.0.2). | Team | Review meeting; each proposal accepted/rejected with a one-line rationale in this section. ADR-0004 and ADR-0005 depend on R-054 and R-053. |
+| 6 | Address Groups and Service Groups: flat (domain model) or nested with cycle rejection (R-011, R-013 and the schema). A Service with one or several protocols. | Team | Settle with the schema review, then align R-010, R-011, R-013. |
+| 7 | Address types: the schema has FQDN and MAC Addresses, R-012 only CIDR and ranges; the Data Plane does not support FQDN or MAC yet. | Team | Decide whether they are in release 1.0; if so, add refinements of R-012. |
+| 8 | Per-Policy log level (schema field `log`) versus R-026, which requires an Event for every Flow. | Team | Remove the field, or reword R-026. |
+| 9 | Lowering of the IPv6 requirements from M to S (§6.1 note). | Team | Confirm, or keep them M and plan IPv6 for 1.0. |
+| 10 | Behaviour of traffic between members of the same Zone with no RuleSet (R-046.2). | Team | Keep R-046.2, or require an explicit RuleSet and withdraw it. |
+| 11 | Interpretation of R-020.5 "key not stored alongside data" on hardware without a TPM (ADR-0009). | Team | Accept the limitation and document it, or require hardware key protection on the reference platform. |
+| 12 | SNAT to an IP pool (schema `translateIpTo` on `snat`): no requirement yet. | Team | Add as a Could refinement of R-002, or remove from the schema. |
+
+### Resolved
+
+| # | Issue | Resolution |
+|---|---|---|
+| 3 | Does C-001 exclude `nf_conntrack`? | Moot: connection tracking is implemented in BPF maps and `nf_conntrack` is not used (ADR-0003). C-001 unchanged. |
+| 4 | Interface/Zone fields set to `any`. | Not allowed; one RuleSet per ordered pair of different Interfaces or Zones (R-014.5). |
+| 5 | Concurrent editing by two administrators. | Optimistic locking on the Configuration revision (R-021.5). |
 
 ---
 
@@ -452,3 +477,4 @@ Listed to make the scope boundary explicit. Each may be reconsidered in a future
 | 1.0 | 2026-06 | Team | Initial table (RGFM-style identifiers). |
 | 2.0.0-draft | 2026-10-17 | Hermes (for Agos review) | Stable identifiers; glossary, stakeholders, constraints, verification column, exclusions, traceability table; 4 duplicate/inconsistent IDs fixed; 3 parent/child priority violations fixed; 10 proposed additions; 5 open issues. |
 | 2.0.1-draft | 2026-10-17 | Hermes (for Agos review) | Added R-055/.1/.2 (Colour palette with meaning) and the *Colour* glossary entry, traced from the `Color` kind decision in `songbird-yaml-schema`. |
+| 2.0.2-draft | 2026-10-18 | Claude (for team review) | Aligned with the architecture (domain model v0.6, ADR-0001…0010) and with the schema on colors, NAT and names. Glossary: *RuleSet* added, *Zone*, *Policy*, *Default Deny*, *SNAT*, *DNAT* updated, *Virtual IP* removed, *Colour* renamed *Color*. R-003, R-014, R-020.4, R-033 reworded. New: R-001.5 (static routes with distance and priority), R-009.2 (disable a Policy), R-014.5 (RuleSet), R-021.5 (concurrent edits), R-056 (management access per Interface), R-057 (interim IPv6 drop), W-007 (intra-interface Policies, hairpin NAT). R-046 (+ R-046.1, R-046.2) and R-055 family accepted. IPv6 requirements lowered from M to S (to be confirmed). Open issues 3–5 resolved; 6–12 added. |
