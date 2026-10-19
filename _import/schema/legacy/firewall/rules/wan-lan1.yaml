@@ -1,0 +1,33 @@
+apiVersion: config.songbird-fw.com/v1alpha1
+kind: Rules
+metadata:
+  name: wan-lan1 # primary key
+  uuid: 9768487d-d86b-4d65-aeed-1274f68abc5d
+  comment: 'this is a rule'
+spec:
+  interfaces:
+    incoming: wan
+    outgoing: lan1
+  order:
+    - addresses:
+        source: any
+        destination: nginx_192.168.0.20
+      services:
+        - name: web
+      nat:
+        enabled: true
+        type: DNAT
+        ip: extip_78.25.11.42_443
+      action: accept
+      enabled: true
+    - addresses:
+        source: any
+        destination: k8s_192.168.0.25
+      services:
+        - name: k8s
+      nat:
+        enabled: true
+        type: DNAT
+        ip: extip_78.25.11.42_6443
+      action: accept
+      enabled: true

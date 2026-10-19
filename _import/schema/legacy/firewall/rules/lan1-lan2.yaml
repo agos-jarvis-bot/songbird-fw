@@ -1,0 +1,20 @@
+apiVersion: config.songbird-fw.com/v1alpha1
+kind: Rules
+metadata:
+  name: lan1-lan2 # primary key
+  uuid: b0adc521-b121-44cf-b758-ecc571e42ba9
+  comment: 'this is a rule'
+spec:
+  interfaces:
+    incoming: lan1
+    outgoing: lan2
+  order:
+    - addresses:
+        source: lan1_subnet
+        destination: lan2_subnet
+      services:
+        - name: any
+      nat:
+        enabled: false
+      action: accept
+      enabled: true

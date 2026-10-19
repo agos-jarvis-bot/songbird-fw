@@ -1,0 +1,23 @@
+apiVersion: config.songbird-fw.com/v1alpha1
+kind: Rules
+metadata:
+  name: lan1-wan # primary key
+  uuid: d42ffd4d-6e92-4403-aa9e-2201b302f288
+  comment: 'this is a set of rule'
+spec:
+  interfaces:
+    incoming: lan1
+    outgoing: wan
+  order:
+    - addresses:
+        source: LAN
+        destination: Google
+      services:
+        - name: web
+        - name: dns
+      nat:
+        enabled: true
+        type: SNAT
+        translationIp: default
+      action: accept
+      enabled: true

@@ -1,0 +1,15 @@
+apiVersion: config.songbird-fw.com/v1alpha1
+kind: ServiceGroup
+metadata:
+  name: web # primary key
+  comment: 'this is a service group'
+  uuid: d5380d53-bdec-4aa3-aec8-9b26d4d50df2
+  color: green
+  category: 'internet'
+spec:
+  # IDEA: selector with annotation?
+  # selector:
+  #   config.songbird-fw.com/Name: Web
+  services:
+    - name: http
+    - name: https
