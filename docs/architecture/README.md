@@ -31,12 +31,14 @@ One file per decision. A record is never deleted: when a decision changes, a new
 | [0008](../../adr/0008-schema-versioning-and-rollback.md) | Configuration schema versioning, migration and rollback | Proposed |
 | [0009](../../adr/0009-secrets-encryption-key.md) | Protection and location of the secrets encryption key | Proposed |
 | [0010](../../adr/0010-dnat-in-policy.md) | DNAT is a section of the Policy, matched before translation | Accepted |
+| [0014](../../adr/0014-dhcp-and-dns-engines.md) | DHCP and DNS engines: in-process libraries or external daemons | Proposed (question open) |
+
+ADR-0011 (monorepo), ADR-0012 (canonical YAML serialisation) and ADR-0013 (minimum kernel) are reserved by the Project Plan §5 and not written yet.
 
 ### Candidate ADRs (not written yet)
 
 - Validation both in the API and in the Reconciler (decided, see components.md).
-- Optimistic locking for concurrent edits (proposed in components.md).
-- DHCP and DNS engines: in-process or external daemons.
+- Optimistic locking for concurrent edits (decided, see components.md and R-021.5).
 - Ownership of network configuration: Songbird or the OS.
 - Distribution mechanism: Hadron image upgraded in place, or a custom ISO.
 - Retroactive records for choices already made: Go, `cilium/ebpf`, Hadron, CRD-style YAML.
