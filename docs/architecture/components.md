@@ -303,5 +303,5 @@ Every requirement has exactly one **responsible** component, which carries the v
 **Open**
 
 - **DHCP and DNS engines**: in-process libraries or external daemons? Affects R-018.5 (DNSSEC validation), packaging and failure isolation. ADR needed.
-- **Updater and schema migration**: see [ADR-0008](adr/0008-schema-versioning-and-rollback.md) (proposed).
-- **Secrets encryption key**: see [ADR-0009](adr/0009-secrets-encryption-key.md) (proposed).
+- **Updater and schema migration**: see [ADR-0008](../../adr/0008-schema-versioning-and-rollback.md) (proposed).
+- **Secrets encryption key**: see [ADR-0009](../../adr/0009-secrets-encryption-key.md) (proposed).

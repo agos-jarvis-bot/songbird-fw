@@ -6,7 +6,7 @@
 | Status | Draft for team review |
 | Supersedes | `dataplane.md` v2 (Italian, exploratory, RGFM-style identifiers) |
 | Inputs | Requirements Analysis v2.0.1-draft, Domain Model v0.4-draft, Component View v0.1-draft, `reconciliation.md` |
-| Decisions | [ADR-0002](adr/0002-forwarding-model.md) … [ADR-0007](adr/0007-reference-platform.md) |
+| Decisions | [ADR-0002](../../adr/0002-forwarding-model.md) … [ADR-0007](../../adr/0007-reference-platform.md) |
 
 This document describes the internal design of the **Data Plane**: the eBPF programs and maps that parse, filter, track, translate and forward packets. The Control Plane side (compiling the configuration into maps, applying it, collecting events) is described in `components.md`; the objects being enforced are defined in `domain-model.md`; how and when maps are applied is in `reconciliation.md`.
 
@@ -70,7 +70,7 @@ This document describes the internal design of the **Data Plane**: the eBPF prog
 
 ## 3. Forwarding model
 
-Decided in [ADR-0002](adr/0002-forwarding-model.md): **XDP decides, the kernel forwards, TC rewrites.**
+Decided in [ADR-0002](../../adr/0002-forwarding-model.md): **XDP decides, the kernel forwards, TC rewrites.**
 
 The key technical constraint: a packet redirected with `XDP_REDIRECT` **does not traverse the TC egress hook** of the egress device (it goes to the driver via `ndo_xdp_xmit`). "XDP on ingress + TC for NAT" therefore works only if forwarding is done by the kernel stack.
 
@@ -126,7 +126,7 @@ The DNAT candidate lookup comes **before** the local-address check because the p
 - **VLAN**: XDP is attached to the **physical Interface**; VLAN sub-interfaces support only generic XDP. Up to two tags are read (802.1Q / 802.1ad). With `rxvlan` offload active the NIC strips the tag: disable it (`ethtool -K <if> rxvlan off`) or read it with the kfunc `bpf_xdp_metadata_rx_vlan_tag` (kernel ≥ 6.8, driver-dependent).
 - **Logical Interfaces**: map `{physical ifindex, vlan id} → logical Interface id`, maintained by the Network Driver. All later lookups use the logical id.
 - **PPPoE** (WAN on FTTH): session frames (ethertype `0x8864`) are parsed to the inner IPv4 header, and `{physical ifindex, session id} → logical id` (`ppp0`). Whether XDP metadata reaches TC on `ppp0` is **not verified**; the fallback is to classify PPPoE traffic in TC ingress on `ppp0` (see §15, ADR-0007).
-- **IPv4**: header length from `ihl * 4`. Non-initial fragments follow [ADR-0005](adr/0005-ipv4-fragments.md): dropped and counted when forwarded; passed to the kernel for reassembly, rate-limited, when addressed to the firewall itself.
+- **IPv4**: header length from `ihl * 4`. Non-initial fragments follow [ADR-0005](../../adr/0005-ipv4-fragments.md): dropped and counted when forwarded; passed to the kernel for reassembly, rate-limited, when addressed to the firewall itself.
 - **IPv6 (interim)**: the Ethertype is recognised and the packet is **dropped and counted** with reason `ipv6-unsupported`. It is never passed, because passing would forward it unfiltered. When IPv6 is designed, this rule is replaced by the full parser (extension headers, NDP exceptions required by R-005).
 - **Always allowed before any Policy**: ARP; DHCP requests (UDP 67) on Interfaces where the DHCP server is active.
 - **Address representation**: one 128-bit format; IPv4 mapped as `::ffff:a.b.c.d`. Kept although IPv6 is deferred, so that adding IPv6 does not change the layout of keys.
@@ -189,7 +189,7 @@ Same approach as Polycube / pcn-iptables, now per RuleSet:
 
 1. The Compiler orders the RuleSet's enabled Policies (disabled ones are omitted): **Policy index within the RuleSet = bit position**.
 2. For each dimension, one lookup returns a **bitmap** of the Policies compatible with that field.
-3. `match = src & dst & svc`, computed on the **original** tuple (before any translation) (with `MAX_RULES_PER_RULESET = 1024`, 16 `u64` words; value in [ADR-0006](adr/0006-capacity-limits.md)).
+3. `match = src & dst & svc`, computed on the **original** tuple (before any translation) (with `MAX_RULES_PER_RULESET = 1024`, 16 `u64` words; value in [ADR-0006](../../adr/0006-capacity-limits.md)).
 4. The **first set bit** is the first matching Policy (R-014.4). BPF has no `ctz`: implemented with 6 shift steps or a de Bruijn table.
 5. No bit set → **Default Deny** (R-033).
 
@@ -211,7 +211,7 @@ Until designed, the Validator should reject them in Policies.
 
 ### 7.4 DNAT matching (before translation)
 
-Decided in [ADR-0010](adr/0010-dnat-in-policy.md): DNAT is the `nat` section of a Policy, and a `dnat` Policy matches the destination and service **before** translation (the public address and port), as written in the YAML.
+Decided in [ADR-0010](../../adr/0010-dnat-in-policy.md): DNAT is the `nat` section of a Policy, and a `dnat` Policy matches the destination and service **before** translation (the public address and port), as written in the YAML.
 
 Routing needs the translated destination (to find the output Interface and therefore the RuleSet), while the Policy is evaluated on the original one. The Compiler breaks this cycle with a **DNAT candidate table** built from every enabled `dnat` Policy:
 
@@ -254,7 +254,7 @@ After a Control Plane restart the Dataplane Driver reads the active header and r
 
 ## 9. Connection tracking
 
-Decided in [ADR-0003](adr/0003-own-conntrack.md): **own conntrack in BPF maps**, no `nf_conntrack`.
+Decided in [ADR-0003](../../adr/0003-own-conntrack.md): **own conntrack in BPF maps**, no `nf_conntrack`.
 
 ```c
 struct ct_key {               // 40 bytes
@@ -285,7 +285,7 @@ struct ct_entry {             // 96 bytes
 - **Timeouts** (R-045.2, configurable): TCP handshake 30 s, established 3600 s, closing 10 s; UDP 60 s (180 s bidirectional); ICMP 30 s.
 - **Expiry**: lazy check at lookup (`now - last_seen > timeout` → new Flow) plus a periodic sweep in the Dataplane Driver, which also emits `FLOW_END` with counters.
 - **SYN flood protection**: entries in `SYN_SENT` live in a **separate, smaller map**; the Flow moves to the main map at the first reply. A SYN proxy in XDP can be added later.
-- **Policy change** ([ADR-0004](adr/0004-active-flows-on-policy-change.md), R-054): at the next packet of a Flow whose `policy_gen` differs from the active generation, the ORIG tuple is re-classified. If it is still accepted, `policy_gen` and `rule_idx` are updated; otherwise the packet is dropped, both entries are deleted and `FLOW_END` is emitted with reason `policy-change`. Local-in Flows are re-checked against the new local-in configuration the same way.
+- **Policy change** ([ADR-0004](../../adr/0004-active-flows-on-policy-change.md), R-054): at the next packet of a Flow whose `policy_gen` differs from the active generation, the ORIG tuple is re-classified. If it is still accepted, `policy_gen` and `rule_idx` are updated; otherwise the packet is dropped, both entries are deleted and `FLOW_END` is emitted with reason `policy-change`. Local-in Flows are re-checked against the new local-in configuration the same way.
 
 ## 10. NAT (TC)
 
