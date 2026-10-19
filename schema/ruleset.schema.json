@@ -42,7 +42,9 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/rule"
-          }
+          },
+          "minItems": 0,
+          "description": "Ordered rules; first match wins. May be empty (team decision 2026-10-19): an empty RuleSet is an explicit 'nothing allowed between these two', equivalent to Default Deny (R-033) but visible in the configuration."
         }
       }
     }

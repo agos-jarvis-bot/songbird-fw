@@ -28,18 +28,16 @@ on:
            run: python -c "import json,glob; [json.load(open(f)) for f in glob.glob('*.schema.json')]; print('ok')"
          - name: Valid corpus must pass
            run: python validate.py examples/valid
-         - name: Every invalid file must be rejected
+         - name: Every invalid case must be rejected
            shell: bash
            run: |
              fail=0
-             for f in examples/invalid/*.yaml; do
-               rm -rf "$RUNNER_TEMP/one" && mkdir "$RUNNER_TEMP/one"
-               cp "f" "$RUNNER_TEMP/one/x.yaml"
-               if python validate.py "$RUNNER_TEMP/one" > "$RUNNER_TEMP/out.txt" 2>&1; then
-                 echo "::error file=schema/$f::accepted, but it must be rejected"
+             for d in examples/invalid/*/; do
+               if python validate.py "$d" > "$RUNNER_TEMP/out.txt" 2>&1; then
+                 echo "::error file=schema/$d::accepted, but it must be rejected"
                  fail=1
                else
-                 echo "rejected as expected: $f _ $(grep -m1 ERROR "$RUNNER_TEMP/out.txt" | cut -c1-120)"
+                 echo "rejected as expected: $(basename "$d") — $(grep -m1 ERROR "$RUNNER_TEMP/out.txt" | cut -c1-140)"
                fi
              done
              exit $fail
