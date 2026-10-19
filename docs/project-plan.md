@@ -177,6 +177,7 @@ Milestones are gates, each with a deliverable that is reviewed in a PR. Estimate
 | **0011** | Repository layout: monorepo `songbird-fw` | *to write* | This plan §10; the import PR is the implementation |
 | **0012** | Canonical YAML serialisation and file layout (quoted strings; one object per file vs multi-document) | *to write* | Decide before M1 (`songbird export` output) |
 | **0013** | Minimum kernel and attach method (≥ 6.6 with TCX vs 5.15 LTS with clsact) | *to write* | Decide before M2; interacts with 0007 and spike 7.1 |
+| **0014** | DHCP and DNS engines: in-process libraries or external daemons | Proposed, question open | Decide before the 0.2 DHCP/DNS work (spike) |
 
 ## 6. Roles and responsibilities
 

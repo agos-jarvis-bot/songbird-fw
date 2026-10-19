@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| Version | 0.1-draft |
-| Inputs | Requirements Analysis v2.0.1-draft, Domain Model v0.4-draft, `dataplane.md`; the loop itself is detailed in `reconciliation.md` |
+| Version | 0.2-draft |
+| Inputs | Requirements Analysis v2.0.3-draft, Domain Model v0.7-draft, `dataplane.md`; the loop itself is detailed in `reconciliation.md` |
 | Scope | Components, responsibilities, interfaces, dependency rules, requirement traceability |
 | Not covered here | Deployment on Hadron (separate `deployment.md`), internal design of the eBPF Data Plane (`dataplane.md`) |
 
@@ -97,8 +97,8 @@ flowchart LR
 | **Applier** | Executes **one** apply as a transaction across all drivers: all commit, or all roll back. | Decide when to apply; know subsystem details. | `Applier` | `Driver` implementations | 0.1 |
 | **Dataplane Driver** | Loads the eBPF programs, fills the maps with the compiled plan and swaps generations atomically. | Process packets; classify traffic. | `Driver` | Data Plane (maps, programs) | 0.1 |
 | **Network Driver** | Applies interfaces, VLANs, addresses and static routes to the kernel. | Forward packets; run DHCP or DNS. | `Driver` | Kernel (netlink) | 0.1 |
-| **DHCP Service** | Serves DHCPv4 leases and reservations per Interface. | Choose its own configuration. | `Driver`, `StatusProvider` | DHCP engine (in-process or external, see ADR) | 0.1 |
-| **DNS Service** | Resolves, forwards and caches DNS; fails over between upstreams. | Choose its own configuration. | `Driver`, `StatusProvider` | DNS engine (in-process or external, see ADR) | 0.1 |
+| **DHCP Service** | Serves DHCPv4 leases and reservations per Interface. | Choose its own configuration. | `Driver`, `StatusProvider` | DHCP engine (in-process or external, [ADR-0014](../../adr/0014-dhcp-and-dns-engines.md)) | 0.1 |
+| **DNS Service** | Resolves, forwards and caches DNS on the Interfaces in its `listenOn`; fails over between upstreams; resolves FQDN Addresses for the Compiler (R-012.2). | Choose its own configuration. | `Driver`, `StatusProvider` | DNS engine (in-process or external, [ADR-0014](../../adr/0014-dhcp-and-dns-engines.md)) | 0.1 |
 | **Data Plane (eBPF)** | Filters, tracks Flows, translates addresses and forwards packets in the kernel. | Know about YAML, Git or users. | Maps and programs; ring-buffer events | — | 0.1 |
 | **Event Collector** | Reads Flow Events from the ring buffer, masks addresses and persists them with rotation. | Decide whether traffic is allowed. | `EventSource` consumers; log files; event stream for the UI | Data Plane ring buffer, Config Manager (masking policy) | 0.1 |
 | **Observer** | Computes and exposes health, status and metrics of every subsystem. | Change state. | `/health`, `/metrics`, `StatusProvider` aggregate | Reconciler, drivers, services, Event Collector | 0.1 |
@@ -155,10 +155,11 @@ These rules are what makes the component view checkable. They should be enforced
 - **Validation happens twice.** The API validates a proposed change before committing it (fast feedback, no invalid commit), and the Reconciler validates `HEAD` before every apply (the repository can also change through a pull or a manual edit). This is a candidate ADR.
 - **Reconciler vs Applier.** The Reconciler is a control loop (*when*, retries, boot behaviour); the Applier is a transaction (*how*, all-or-nothing). They are separable because the Applier can be tested with fake drivers, while the Reconciler can be tested with a fake Applier.
 - **Crash recovery comes for free** (R-033.1): at boot the Reconciler reads `HEAD` and applies it, with the API not needed at all.
-- **No bootstrap mode.** On first boot the Config Manager commits a factory-default configuration (for example an internal Interface with a known address and `https` allowed). The Reconciler applies it like any other commit, and the setup wizard is an ordinary UI flow that edits it (R-031, R-031.1).
+- **No bootstrap mode.** On first boot the Config Manager commits a factory-default configuration (for example one Interface with a known address and `https` in `allowAccess`). The Reconciler applies it like any other commit, and the setup wizard is an ordinary UI flow that edits it (R-031, R-031.1).
 - **Schema migration** runs in the Config Manager at startup, before the Reconciler reads the configuration. See ADR-0008.
 - **Rollback is a new commit** that reverts to a previous revision, which is then applied by the normal pipeline. There is no second mechanism.
-- **Administrative access (`allowAccess`)** is part of the compiled `Plan` and is enforced by the Data Plane's local-in path, because C-001 excludes nftables.
+- **Administrative access (`allowAccess`) and System Services** are part of the compiled `Plan` and are enforced by the Data Plane's local-in path, because C-001 excludes nftables. `allowAccess` opens Management Services on an Interface; a System Service (DNS, NTP) opens its own ports on the Interfaces in its `listenOn` (DM-34).
+- **Overlapping RuleSets are flattened by the Compiler.** A member Interface may be used next to its Zone; the Compiler builds, for each ordered pair of Interfaces, one effective Policy list in the evaluation order of DM-42, so the Data Plane still does a single lookup per pair. The same order is returned by the API and the CLI to show it to the user (R-046.3).
 - **Audit and Git pulls.** The Config Manager records every change, so changes arriving through GitOps Sync are audited as well as those from the UI.
 
 ## Requirement matrix
@@ -173,7 +174,7 @@ Every requirement has exactly one **responsible** component, which carries the v
 | R-001.3, R-001.4 *(deferred)* | Data Plane | Network Driver |
 | R-001.5 | Network Driver (routes with distance and priority) | Observer (link state) |
 | R-057 | Data Plane (interim IPv6 drop) | — |
-| R-002 | Data Plane | Compiler |
+| R-002, R-002.1, R-002.2 | Data Plane | Compiler |
 | R-003 | Data Plane | Compiler (DNAT candidates) |
 | R-004 *(deferred)* | Network Driver | — |
 | R-005 *(deferred)* | Data Plane | — |
@@ -184,13 +185,18 @@ Every requirement has exactly one **responsible** component, which carries the v
 | Requirement | Responsible | Contributes |
 |---|---|---|
 | R-009, R-009.1, R-009.2 | Web UI | API Server, Compiler (omits disabled Policies) |
-| R-010, R-011, R-012, R-013 | Validator | Compiler |
+| R-010, R-011, R-012, R-013, R-012.4, R-012.5 | Validator | Compiler |
+| R-012.1 | Config Manager (predefined `any`, `any6`) | Validator |
+| R-012.2 | Compiler (FQDN sets as runtime facts) | DNS Service (resolution), Data Plane |
+| R-012.3 | Data Plane (source MAC match) | Validator (source only) |
 | R-014 | Validator | — |
 | R-014.1, R-014.2, R-014.3 | Compiler (expands groups and lists into match rules) | Data Plane |
 | R-014.4 | Data Plane (first match wins) | Compiler (preserves order) |
 | R-015, R-015.1 | Web UI | Observer (interface events) |
-| R-014.5, R-046, R-046.1 | Validator | Compiler (expands Zones) |
+| R-014.5, R-046 | Validator | Compiler (expands Zones) |
+| R-046.1 | Compiler (effective Policy list per Interface pair) | Data Plane |
 | R-046.2 | Compiler | Data Plane |
+| R-046.3 | Web UI | CLI, API Server, Compiler (evaluation order) |
 
 ### Network services
 
@@ -201,6 +207,7 @@ Every requirement has exactly one **responsible** component, which carries the v
 | R-018, R-018.1–R-018.5 | DNS Service | Compiler |
 | R-018.6 *(deferred)* | DNS Service | — |
 | R-034, R-034.1 | DNS Service | — |
+| R-058 | Data Plane (local-in) | Compiler, DNS Service |
 
 ### Configuration, GitOps and lifecycle
 
@@ -271,6 +278,7 @@ Every requirement has exactly one **responsible** component, which carries the v
 | R-054 | Data Plane | Applier (generation swap) |
 | R-055 | Web UI | Validator |
 | R-055.1, R-055.2 | Validator | Web UI |
+| R-059 | NTP Service (to be added to the components if R-059 is accepted) | Compiler, Data Plane (local-in) |
 
 ### Constraints
 
@@ -284,9 +292,7 @@ Every requirement has exactly one **responsible** component, which carries the v
 
 ### Behaviour with no requirement yet
 
-| Behaviour | Proposed responsible |
-|---|---|
-| SNAT to an IP pool (`snat` with `translateIpTo`) | Data Plane (RA open issue #12) |
+None at the moment: SNAT to an IP pool is now R-002.1.
 
 ## Decisions taken and open issues
 
@@ -294,14 +300,11 @@ Every requirement has exactly one **responsible** component, which carries the v
 
 - **Validation happens both in the API and in the Reconciler.**
 - **Initial access** uses a factory-default configuration plus the setup wizard (no special Reconciler mode).
-
-**Proposed, to be confirmed**
-
-- **Concurrent edits** (RA open issue #5): optimistic locking on the repository revision, implemented in the Config Manager. Every read returns the revision (commit id) and every write carries the revision it was based on. If it is still `HEAD`, the change is committed. Otherwise the Config Manager attempts an automatic merge at file level: changes to different objects are merged into a new commit, while changes to the same file are rejected with a conflict that returns the current object and the diff. The API maps this to `ETag` / `If-Match` and `409 Conflict`. Commits are serialised by the Config Manager, the only writer. No pessimistic locks.
-- **Event stream to the UI** (R-028): the Event Collector keeps a bounded in-memory buffer and exposes a stream (e.g. server-sent events) that the API relays. This is consistent with dependency rule 2, because the API never talks to the Data Plane.
+- **Concurrent edits** (RA open issue #5, resolved in R-021.5; decided 2026-10-19): optimistic locking on the repository revision, implemented in the Config Manager. Every read returns the revision (commit id) and every write carries the revision it was based on. If it is still `HEAD`, the change is committed. Otherwise the Config Manager attempts an automatic merge at file level: changes to different objects are merged into a new commit, while changes to the same file are rejected with a conflict that returns the current object and the diff. The API maps this to `ETag` / `If-Match` and `409 Conflict`. Commits are serialised by the Config Manager, the only writer. No pessimistic locks.
+- **Event stream to the UI** (R-028, decided 2026-10-19): the Event Collector keeps a bounded in-memory buffer and exposes a stream (e.g. server-sent events) that the API relays. This is consistent with dependency rule 2, because the API never talks to the Data Plane.
 
 **Open**
 
-- **DHCP and DNS engines**: in-process libraries or external daemons? Affects R-018.5 (DNSSEC validation), packaging and failure isolation. ADR needed.
+- **DHCP and DNS engines**: in-process libraries or external daemons? See [ADR-0014](../../adr/0014-dhcp-and-dns-engines.md) (proposed, question kept open).
 - **Updater and schema migration**: see [ADR-0008](../../adr/0008-schema-versioning-and-rollback.md) (proposed).
 - **Secrets encryption key**: see [ADR-0009](../../adr/0009-secrets-encryption-key.md) (proposed).
