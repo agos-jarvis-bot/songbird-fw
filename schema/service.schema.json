@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://config.songbird-fw.com/v1alpha1/service.schema.json",
   "title": "Service",
-  "description": "A named L4 service (R-010): one or more protocol entries, possibly of different protocols (e.g. DNS = TCP 53 + UDP 53). TCP/UDP/SCTP require a port or range; ICMP/ICMPv6 accept optional type/code; 'ip' matches a raw protocol number. The predefined Service 'any' (R-010.1) is the single entry {protocol: any} with predefined: true; 'any' as a protocol is accepted only there (validator check).",
+  "description": "A named L4 service (R-010): one or more protocol entries, possibly of different protocols (e.g. DNS = TCP 53 + UDP 53). TCP/UDP/SCTP require a destination port or range (no source-port matching, team decision 2026-10-19); ICMP/ICMPv6 accept optional type/code; 'ip' matches a raw protocol number. The predefined Service 'any' (R-010.1) is the single entry {protocol: any} with predefined: true; 'any' as a protocol is accepted only there (validator check).",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -63,9 +63,6 @@
           ]
         },
         "port": {
-          "$ref": "common.schema.json#/$defs/portOrRange"
-        },
-        "sourcePort": {
           "$ref": "common.schema.json#/$defs/portOrRange"
         },
         "icmpType": {
@@ -143,11 +140,6 @@
                 },
                 {
                   "required": [
-                    "sourcePort"
-                  ]
-                },
-                {
-                  "required": [
                     "protocolNumber"
                   ]
                 }
@@ -181,11 +173,6 @@
                 },
                 {
                   "required": [
-                    "sourcePort"
-                  ]
-                },
-                {
-                  "required": [
                     "icmpType"
                   ]
                 },
@@ -212,11 +199,6 @@
                 {
                   "required": [
                     "port"
-                  ]
-                },
-                {
-                  "required": [
-                    "sourcePort"
                   ]
                 },
                 {

@@ -16,8 +16,10 @@ schema/                     (this directory)
   servicegroup.schema.json  kind: ServiceGroup
   ruleset.schema.json       kind: RuleSet        (replaces v0 `Rules`; NAT is a section of the rule)
 examples/
-  valid/                    a complete small-office configuration (46 objects: system, predefined any/any6, palette, 5 interfaces, 3 zones, 6 rule sets)
-  invalid/                  43 files, each violating exactly one rule
+  valid/                    a complete small-office configuration, ONE OBJECT PER FILE (55 objects):
+                              system.yaml, interfaces/, zones/, addresses/, address-groups/, services/,
+                              service-groups/, colors/ (16 predefined + 1 user), rulesets/
+  invalid/                  49 cases, one directory each, violating exactly one rule
 validate.py                 prototype of `songbird validate <dir>` (schema + semantic checks)
 ```
 
@@ -52,7 +54,11 @@ Decision: **JSON Schema is the normative artifact**; the cross-object rules that
 11. **Interfaces have no `role`.** The former `role` field (and its dangerous default `internal`) is gone: what an Interface may do follows from its Zone, its `allowAccess` and the System Services listening on it. The setup-time UI restriction relies on `allowAccess` only (RA R-031.1); the DHCP server may run on any Interface (R-017.5).
 12. **`allowAccess` is a closed list of Management Services** — `https`, `ping`, `ssh` — exactly like FortiGate `allowaccess`. Network services the firewall offers to its hosts (DNS, NTP; DHCP pending RA open issue 13) are **System Services** under `System.spec.systemServices.<service>.listenOn` (Interfaces or Zones); the firewall admits their traffic without a Policy (R-058). This removes the double-definition that `dns` in `allowAccess` + `serveToInterfaces` allowed.
 13. **`System` is a singleton** (`metadata.name: "system"`) holding the global settings, structured after FortiGate's `config system global / admin / ntp / dns / session-ttl` and `config log`: `admin` (HTTPS port, session timeout, lockout, trusted hosts, ACME certificate, UI theme), `ntp`, `dns` (forwarder/recursive, upstreams + failover, local records, DNS64), `logging` (rotation, GDPR masking, syslog), `session` (conntrack timeouts, fragments, behaviour on rule change), `nat64`, `git` (GitOps remote and auth), `updates` (A/B channel + window), `threatFeeds`. Every section has defaults; the minimal object is `{hostname}`. Per-interface management access is `Interface.spec.allowAccess` (FortiGate `allowaccess`). **Secrets never appear in clear**: they must use the `ENC[...]` envelope, enforced by the schema (R-020.5).
-14. **Serialisation style: every string value is double-quoted** (`kind: "Address"`, `port: 443` stays a number), keys unquoted, 2-space indent, block style with inline `{}`/`[]` only for short leaf maps/lists. This is the canonical form `songbird export` writes and the UI commits, so diffs are stable and types are unambiguous (`"yes"`, `"010"`, `"1e3"` are strings). JSON Schema does not and cannot enforce quoting — a formatter/linter step does.
+14. **One object per file** (team decision 2026-10-19). The validator rejects multi-document files (`one-object-per-file`). Canonical layout, written by `songbird export`: `system.yaml` at the root and one directory per kind in kebab-case plural (`interfaces/`, `zones/`, `addresses/`, `address-groups/`, `services/`, `service-groups/`, `colors/`, `rulesets/`), file name = `metadata.name`. The file name is not (yet) enforced to equal the object name.
+15. **Empty RuleSet allowed** (`rules: []`): an explicit "nothing between these two" that relies on Default Deny but is visible in the configuration and in the UI.
+16. **DHCP is a System Service**: `systemServices.dhcp.<interface>` holds one block per Interface (range, lease time, gateway, DNS/NTP servers, domain, reservations by MAC). The Interface must have a static IPv4 address; the pool, gateway and reservations must lie in its subnet. **Coherence rule** (RA R-017.6): when a pool advertises the firewall itself as DNS or NTP server (explicitly, or by omitting `dnsServers`), that Interface or its Zone must be in the corresponding `listenOn` — otherwise clients would get a server that does not answer.
+17. **No `sourcePort` on Service** (team decision 2026-10-19).
+18. **Serialisation style: every string value is double-quoted** (`kind: "Address"`, `port: 443` stays a number), keys unquoted, 2-space indent, block style with inline `{}`/`[]` only for short leaf maps/lists. This is the canonical form `songbird export` writes and the UI commits, so diffs are stable and types are unambiguous (`"yes"`, `"010"`, `"1e3"` are strings). JSON Schema does not and cannot enforce quoting — a formatter/linter step does.
 
 ## Semantic rules (implemented in `validate.py`, not expressible in JSON Schema)
 
@@ -77,6 +83,9 @@ Decision: **JSON Schema is the normative artifact**; the cross-object rules that
 | `dnat-any-destination` / `dnat-any-service` | dnat needs an explicit destination; port translation needs an explicit service |
 | `dnat-service-shape` / `dnat-protocol-mismatch` | `translateServiceTo` has one tcp/udp/sctp entry with a single port, same protocol as the rule's service |
 | `system-singleton` | At most one System object |
+| `one-object-per-file` | A YAML file holds exactly one object |
+| `dhcp-needs-static` / `dhcp-range-subnet` / `dhcp-range-order` / `dhcp-range-own-address` / `dhcp-gateway-subnet` / `dhcp-reservation-subnet` / `dhcp-reservation-dup` | DHCP pool well-formed against its Interface |
+| `dhcp-advertises-silent-service` | R-017.6 coherence between DHCP-advertised DNS/NTP and `listenOn` |
 | `predefined-immutable` / `predefined-unknown` / `any-protocol` | Shipped `any`/`any6`/Service `any` are immutable; `predefined: true` and `protocol: any` are allowed only on them |
 | `unsupported-address-kind` | An enabled rule may not reference an FQDN or MAC Address until the Data Plane supports them (RA R-012.4) |
 | `dns64-without-nat64` / `recursive-upstreams` | System cross-section consistency |
@@ -86,8 +95,8 @@ Decision: **JSON Schema is the normative artifact**; the cross-object rules that
 ```bash
 # one-off, with uv
 uv venv .venv && uv pip install --python .venv/bin/python jsonschema pyyaml
-.venv/bin/python validate.py examples/valid        # → 46 objects, 0 errors (exit 0)
-.venv/bin/python validate.py examples/invalid      # → 43+ errors (exit 1)
+.venv/bin/python validate.py examples/valid        # → 55 objects, 0 errors (exit 0)
+for d in examples/invalid/*/; do .venv/bin/python validate.py "$d"; done   # every case exits 1
 
 # editor autocomplete: first line of any YAML file
 # yaml-language-server: $schema=../../schema/songbird.schema.json
@@ -102,9 +111,10 @@ uv venv .venv && uv pip install --python .venv/bin/python jsonschema pyyaml
 ## Open questions for the team
 
 1. ~~Should `Address.spec.fqdn` and `.mac` stay in `Address`?~~ **Decided 2026-10-19**: they stay in `Address` (RA R-012.2/.3); enabled rules referencing them are rejected until the Data Plane supports them (R-012.4, rule `unsupported-address-kind`).
-2. `RuleSet.spec.rules` may be empty (explicit "nothing allowed between these two"). Keep, or require `minItems: 1` and rely on Default Deny?
-3. Multi-document YAML files vs one object per file. The schema is agnostic; Git diffs are cleaner with one-per-file, the UI export is simpler with one-per-kind. Pick one and make `songbird export` enforce it.
+2. ~~Empty RuleSet?~~ **Decided 2026-10-19**: allowed (`minItems: 0`); semantics = Default Deny made explicit.
+3. ~~Multi-document vs one object per file?~~ **Decided 2026-10-19**: one object per file, enforced by the validator; layout in design decision 14.
 4. ~~Can a rule have both snat and dnat (hairpin)?~~ **Decided**: no — RA W-007 excludes hairpin NAT; `nat.type` stays one of the two.
-7. **DHCP server** (RA open issue 13): per Interface or `systemServices.dhcp` with one block per Interface? Whichever is chosen, add the coherence rule: a pool advertising the firewall as DNS/NTP requires that Interface (or its Zone) in the corresponding `listenOn`.
-5. The predefined palette is hard-coded in the validator (`PREDEFINED_PALETTE`). In the Go implementation it should ship as an embedded YAML (`palette.yaml`) so that the UI, the validator and `songbird export` use the same list. Should the palette be 7, 12 or 16 colours?
-6. Service `sourcePort`: kept for completeness, but FortiGate hides it by default. Keep or drop for v1alpha1?
+7. ~~DHCP server placement?~~ **Decided 2026-10-19**: `systemServices.dhcp.<interface>`, with the coherence rule (design decision 16, RA R-017.6).
+8. Should the validator enforce *file name = object name* and *directory = kind*? Cheap to add; makes `songbird export` round-trips byte-identical.
+5. ~~Palette size?~~ **Decided 2026-10-19**: 16 colours (the original 7 keep their hex). Still to do in Go: ship the palette as an embedded YAML shared by validator, UI and export.
+6. ~~Service `sourcePort`?~~ **Decided 2026-10-19**: dropped.
