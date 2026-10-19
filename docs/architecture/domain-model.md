@@ -552,7 +552,7 @@ Decisions of 2026-10-19 that the schema does not reflect yet. The schema is main
 | `referenceOrAny` and the keyword `any`; `any` reserved | Predefined Addresses `any`, `any6` and Service `any`; reserved words `all`, `none` (DM-21) |
 | Policy field `log` | Removed (R-026) |
 | `fqdn` / `mac` accepted in Policies | Rejected in enabled Policies until supported (DM-43); `mac` only as source (DM-44) |
-| RuleSets: a member Interface of a Zone rejected | Allowed (DM-38); `from` and `to` different objects (DM-06) |
+| RuleSet `from` = `to` rejected only for Interfaces (a Zone to the same Zone passes) | Rejected for Zones too (DM-06). Member Interfaces next to their Zone are already accepted, as now decided (DM-38) |
 
 ## Open questions
 
