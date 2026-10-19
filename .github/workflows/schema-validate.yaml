@@ -1,43 +1,50 @@
-- yaml
 name: schema-validate
+
 on:
   push:
     branches: [main]
-    paths: ["schema/**", ".github/workflows/schema-validate.yml"]
-  pull_requests:
-    paths: ["schema/**", ".github/workflows/schema-validate.yml"]
-  permissions:
-    contents: read
-  jobs:
-    corpus:
-      name: Validate schema corpus
-      runs-on: ubuntu-latest
-      defaults:
-       run:
-         working-directory: schema
-       steps:
-         - uses: actions/checkout@v4
-         - uses: actions/setup-python@v5
-           with:
-             python-version: "3.12"
-             cache: pip
-             cache-dependency-path: schema/requirements.txt
-         - name: Install validator dependencies
-           run: pip install -r requirements.txt
-         - name: Every JSON Schema file must be valid JSON
-           run: python -c "import json,glob; [json.load(open(f)) for f in glob.glob('*.schema.json')]; print('ok')"
-         - name: Valid corpus must pass
-           run: python validate.py examples/valid
-         - name: Every invalid case must be rejected
-           shell: bash
-           run: |
-             fail=0
-             for d in examples/invalid/*/; do
-               if python validate.py "$d" > "$RUNNER_TEMP/out.txt" 2>&1; then
-                 echo "::error file=schema/$d::accepted, but it must be rejected"
-                 fail=1
-               else
-                 echo "rejected as expected: $(basename "$d") — $(grep -m1 ERROR "$RUNNER_TEMP/out.txt" | cut -c1-140)"
-               fi
-             done
-             exit $fail
+    paths: ["schema/**", ".github/workflows/schema-validate.yaml"]
+  pull_request:
+    paths: ["schema/**", ".github/workflows/schema-validate.yaml"]
+
+permissions:
+  contents: read
+
+jobs:
+  corpus:
+    name: Validate schema corpus
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: schema
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: schema/requirements.txt
+
+      - name: Install validator dependencies
+        run: pip install -r requirements.txt
+
+      - name: Every JSON Schema file must be valid JSON
+        run: python -c "import json,glob; [json.load(open(f)) for f in glob.glob('*.schema.json')]; print('ok')"
+
+      - name: Valid corpus must pass
+        run: python validate.py examples/valid
+
+      - name: Every invalid case must be rejected
+        shell: bash
+        run: |
+          fail=0
+          for d in examples/invalid/*/; do
+            if python validate.py "$d" > "$RUNNER_TEMP/out.txt" 2>&1; then
+              echo "::error file=schema/$d::accepted, but it must be rejected"
+              fail=1
+            else
+              echo "rejected as expected: $(basename "$d") — $(grep -m1 ERROR "$RUNNER_TEMP/out.txt" | cut -c1-140)"
+            fi
+          done
+          exit $fail
