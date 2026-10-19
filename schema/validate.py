@@ -7,6 +7,7 @@ Two layers:
   2. Semantic: cross-object rules that JSON Schema cannot express.
 
 Predefined objects (Address any/any6, Service any) are implicit: injected if absent, immutable if present.
+Multi-document YAML files are accepted on input; one object per file is only the canonical export layout.
 Exit code 0 = valid, 1 = errors, 2 = usage.
 Every error is reported as  <file>:<doc#> <kind>/<name> <rule>: <message>
 """
@@ -365,9 +366,6 @@ def load_dir(root):
         except yaml.YAMLError as e:
             errors.append(f"{f}:0 yaml: {e}")
             continue
-        real = [d for d in docs if d is not None]
-        if len(real) > 1:
-            errors.append(f"{f}:0 one-object-per-file: {len(real)} documents in one file; each object must live in its own file (team decision 2026-10-19)")
         for i, d in enumerate(docs):
             if d is None:
                 continue
