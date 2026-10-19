@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Document** | RA – Requirements Analysis |
-| **Version** | 2.0.3-draft |
+| **Version** | 2.0.4-draft |
 | **Status** | Draft for team review |
 | **Supersedes** | 2.0.2-draft. Earlier versions are kept as Git tags, see §12 |
 | **License** | AGPL-3.0 |
@@ -58,7 +58,7 @@ Terms are capitalised in the requirement text when used in the sense defined her
 |---|---|
 | **Physical Interface** | A network device backed by a NIC (e.g. `eth0`, `enp1s0`). |
 | **Logical Interface** | A network device derived from a Physical Interface, in particular an 802.1Q VLAN sub-interface (e.g. `eth0.10`) or a PPPoE device. |
-| **Interface** | Either a Physical or a Logical Interface. |
+| **Interface** | Either a Physical or a Logical Interface. An Interface has no role or type classification (such as LAN/WAN/DMZ): what it may do is determined only by its Zone membership, its Management Services (R-056) and the System Services listening on it (R-058). |
 | **Zone** | A named, user-defined set of Interfaces. An Interface belongs to at most one Zone. RuleSets may reference a Zone or any of its member Interfaces; when several RuleSets apply to the same traffic, the more specific one is evaluated first (R-046.1). |
 | **RuleSet** | The ordered list of Policies for traffic entering from one Interface or Zone and leaving through another. There is at most one RuleSet per ordered pair; the two sides must be different objects, and no wildcard Interface exists. |
 | **Address** | A named configuration object representing an IPv4/IPv6 subnet in CIDR notation, an inclusive IP range, an FQDN, or a MAC address. A single host is a subnet with a /32 (IPv4) or /128 (IPv6) prefix. |
@@ -85,8 +85,8 @@ Terms are capitalised in the requirement text when used in the sense defined her
 | **Audit Log** | The structured, tamper-evident record of administrative actions (configuration changes, authentication events). |
 | **Event** | A structured record emitted by the Data Plane to the Control Plane about a Flow. |
 | **Subsystem** | A major runtime component with its own health status: Data Plane, DHCP, DNS, GitOps, API/UI, Alerting. |
-| **System Service** | A network service provided by the firewall itself to the hosts of its networks (DNS server, NTP server). It is enabled on the Interfaces or Zones where it listens, not through `allowAccess`. |
-| **Management Service** | A service used to administer the firewall itself (HTTPS management, ICMP echo, later SSH). It is enabled per Interface through `allowAccess` (R-056). |
+| **System Service** | A network service provided by the firewall itself to the hosts of its networks (DNS server, NTP server; DHCP server pending open issue 13). It is enabled on the Interfaces or Zones where it listens (configuration section `systemServices`, field `listenOn`), not through `allowAccess`; the firewall admits the corresponding traffic to itself without a Policy. |
+| **Management Service** | A service used to administer the firewall itself: HTTPS management, ICMP echo, and SSH (for the command-line interface, when available). It is enabled per Interface through `allowAccess` (R-056), which contains Management Services only. |
 | **User** | A local administrative account of the appliance. |
 | **Role** | A named set of permissions assigned to Users (e.g. `admin`, `read-only`). |
 | **Color** | A named palette entry with a fixed colour value and a user-defined meaning, used to visually classify related configuration objects (e.g. "green = Backup"). Every configuration object may reference at most one Color. |
@@ -179,6 +179,8 @@ Ordered by identifier. **Scope**: U/G. **Type**: F/N. **Pri**: M/S/C.
 >
 > **Note (v2.0.3):** R-002.1 and R-002.2 cover SNAT to an IP pool, already present in the schema (`translateIpTo` on `snat`) and in the 0.1 scope of the Project Plan (open issue #12 resolved).
 
+> **Note (v2.0.4):** Follow-up of the decisions of 2026-10-19. `allowAccess` is a closed list of Management Services (HTTPS, ICMP echo, SSH) and System Services live in `systemServices.<service>.listenOn` (R-056, R-058, glossary). Interfaces have no role: the former `role` field (and its default `internal`) is removed from the schema; the setup-time UI restriction relies on R-056 only (R-031.1) and the DHCP server may run on any Interface (R-017.5). The reserved word `all` is dropped from the domain model; `none` stays reserved.
+
 ### 6.2 Configuration objects and Policies
 
 | ID | Scope | Type | Pri | Quality | Requirement | Verification |
@@ -223,6 +225,7 @@ Ordered by identifier. **Scope**: U/G. **Type**: F/N. **Pri**: M/S/C.
 | R-017.1 | G | F | M | Interoperability | The DHCP server shall allow configuration of the lease duration. | **T-I** – lease time in the OFFER/ACK equals the configured value. |
 | R-017.2 | G | F | M | Interoperability | The DHCP server shall allow static address assignment based on client MAC address. | **T-I** – client with reserved MAC always receives the reserved address. |
 | R-017.3 | G | F | M | Reliability | The DHCP server shall serve independent pools per Interface, with no address leaking between pools. | **T-I** – two LAN netns, two pools; each client gets an address from its own Interface's pool. |
+| R-017.5 | G | F | M | Flexibility | The DHCP server shall be enableable on any Interface: no Interface classification shall restrict where a pool may be served. | **T-U** – validator accepts a pool on an Interface that is also the default-route (WAN) Interface; **T-I** – a client on that Interface obtains a lease. |
 | R-017.4 | G | F | S | Interoperability | The system shall support DHCPv6 (RFC 8415) including Prefix Delegation as a client on an upstream Interface and as a server on the other Interfaces. | **T-I** – upstream netns runs a DHCPv6-PD server; Songbird obtains a delegated prefix and advertises a sub-prefix on the LAN. |
 | **R-018** | G | F | M | Interoperability | The system shall provide a local DNS server. | **T-I** – `dig @songbird` resolves an external name. |
 | R-018.1 | G | F | M | Interoperability | In *Forwarder* mode, the DNS server shall cache positive answers and forward unresolved queries to the configured upstream servers. | **T-I** – second identical query is answered with no upstream traffic (observed with `tcpdump` on the upstream link). |
@@ -233,7 +236,7 @@ Ordered by identifier. **Scope**: U/G. **Type**: F/N. **Pri**: M/S/C.
 | R-018.6 | G | F | S | Interoperability | The system shall provide DNS64 (RFC 6147) synthesising AAAA records for IPv4-only names, consistent with the NAT64 prefix. | **T-I** – `dig AAAA` of an A-only name returns an address inside the NAT64 prefix. |
 | **R-034** | G | N | S | Reliability | The system shall fail over to the secondary upstream DNS server after 3 consecutive timeouts of the primary. | **T-I** – black-hole the primary; 4th query is answered by the secondary. |
 | R-034.1 | G | N | S | Reliability | Failover shall complete within 5 s of detecting the primary timeout, without failing in-flight queries. | **T-I** – as R-034, timing measured; no SERVFAIL returned to the client. |
-| **R-058** | G | F | M | Security | For each System Service (the DNS server, and the NTP server if R-059 is accepted), the system shall allow configuring the Interfaces or Zones on which it listens; the service shall be reachable only through those Interfaces, without a Policy, and on no Interface by default. | **T-I** – DNS server listening on `internal` only: `dig` from `lan1` succeeds, from `wan1` times out with no Policy involved; removing `internal` from the list stops answers on `lan1`. |
+| **R-058** | G | F | M | Security | For each System Service (the DNS server, and the NTP server if R-059 is accepted), the system shall allow configuring the Interfaces or Zones on which it listens (`systemServices.<service>.listenOn`; a Zone stands for all its member Interfaces); the service shall be reachable only through those Interfaces, without a Policy, and on no Interface by default. | **T-I** – DNS server listening on `internal` only: `dig` from `lan1` succeeds, from `wan1` times out with no Policy involved; removing `internal` from the list stops answers on `lan1`. |
 
 ### 6.4 Configuration, GitOps and lifecycle
 
@@ -320,7 +323,7 @@ Ordered by identifier. **Scope**: U/G. **Type**: F/N. **Pri**: M/S/C.
 | R-038.2 | G | F | S | Security | The system shall obtain and renew TLS certificates via ACME (RFC 8555) with the HTTP-01 challenge. | **T-S** – against Pebble (ACME test server) in CI; a valid certificate is installed. |
 | R-038.3 | G | F | S | Security | The system shall obtain and renew TLS certificates via ACME with the DNS-01 challenge, for at least one DNS provider API. | **T-S** – Pebble with its challenge test server. |
 | R-038.4 | G | N | S | Reliability | The system shall check certificate validity daily and renew when fewer than 30 days remain. | **T-S** – install a certificate expiring in 20 days; after the daily check a renewal request is observed. |
-| **R-056** | G | F | M | Security | The system shall allow configuring, per Interface, which Management Services of the firewall itself (at least HTTPS management and ICMP echo) are reachable through the addresses of that Interface, with none enabled by default. System Services are not configured here (R-058). | **T-I** – with HTTPS enabled only on LAN, the UI answers on the LAN address and not on the WAN address, from any client; ping follows its own setting. |
+| **R-056** | G | F | M | Security | The system shall allow configuring, per Interface, which Management Services of the firewall itself — HTTPS management, ICMP echo, SSH — are reachable through the addresses of that Interface, with none enabled by default. The set of Management Services is closed: System Services (DNS, NTP, DHCP) are not configured here but through their own listening Interfaces (R-058). | **T-I** – with HTTPS enabled only on LAN, the UI answers on the LAN address and not on the WAN address, from any client; ping follows its own setting. |
 | **R-043** | U | F | M | Security | The user interface and API shall require authentication before exposing any functionality other than the login form and `/health`. | **T-S** – every API route except login and `/health` returns 401 without a session. |
 | R-043.1 | U | F | M | Security | The system shall support local Users with passwords hashed with bcrypt, cost factor ≥ 12. | **T-U** – stored hash is a bcrypt hash with cost ≥ 12; **A** – code review of the hashing path. |
 | R-043.2 | U | F | M | Security | After 5 consecutive failed login attempts from the same source address, further attempts from that address shall be refused for 10 min. | **T-S** – 5 wrong passwords → 6th attempt (correct password) refused with 429/423; succeeds after 10 min (clock-skewed test). |
@@ -470,7 +473,7 @@ Listed to make the scope boundary explicit. Each may be reconsidered in a future
 | 1 | Numeric targets of R-047/R-048/R-049 and the reference platform C-003. | Team | Decide after a first benchmark of the PoC on the intended hardware (ADR-0006, ADR-0007). |
 | 2 | Acceptance of proposed R-045, R-047…R-054 (R-046 and R-055 accepted in 2.0.2). | Team | Review meeting; each proposal accepted/rejected with a one-line rationale in this section. ADR-0004 and ADR-0005 depend on R-054 and R-053. |
 | 11 | Interpretation of R-020.5 "key not stored alongside data" on hardware without a TPM (ADR-0009). | Team | Kept open: investigate a solution (e.g. key derived from an admin passphrase at boot, or an external key file) before 0.3. |
-| 13 | DHCP server configuration: per Interface (domain model) or in the System Services section with the DNS and NTP servers. DHCP may run on any Interface. | Team | Decide together with ADR-0014 (DHCP and DNS engines). |
+| 13 | DHCP server configuration: per Interface (domain model) or in `systemServices.dhcp` with one block per Interface. DHCP may run on any Interface (R-017.5). **Coherence rule to add when deciding**: if the DHCP pool of an Interface advertises the firewall as DNS (or NTP) server, that Interface or its Zone must be in the corresponding `listenOn`, otherwise clients receive a server that does not answer; the validator shall reject the Configuration. | Team | Kept open 2026-10-19. Decide together with ADR-0014 (DHCP and DNS engines). |
 | 14 | Acceptance of R-059 (NTP client and server), proposed in 2.0.3. | Team | Review meeting. |
 
 ### Resolved
@@ -507,4 +510,5 @@ Every reviewed version is kept as a Git tag. Versions up to 2.0.2 are tagged in 
 | 2.0.0-draft | 2026-10-17 | Hermes (for Agos review) | Stable identifiers; glossary, stakeholders, constraints, verification column, exclusions, traceability table; 4 duplicate/inconsistent IDs fixed; 3 parent/child priority violations fixed; 10 proposed additions; 5 open issues. |
 | 2.0.1-draft | 2026-10-17 | Hermes (for Agos review) | Added R-055/.1/.2 (Colour palette with meaning) and the *Colour* glossary entry, traced from the `Color` kind decision in `songbird-yaml-schema`. |
 | 2.0.2-draft | 2026-10-18 | Claude (for team review) | Aligned with the architecture (domain model v0.6, ADR-0001…0010) and with the schema on colors, NAT and names. Glossary: *RuleSet* added, *Zone*, *Policy*, *Default Deny*, *SNAT*, *DNAT* updated, *Virtual IP* removed, *Colour* renamed *Color*. R-003, R-014, R-020.4, R-033 reworded. New: R-001.5 (static routes with distance and priority), R-009.2 (disable a Policy), R-014.5 (RuleSet), R-021.5 (concurrent edits), R-056 (management access per Interface), R-057 (interim IPv6 drop), W-007 (intra-interface Policies, hairpin NAT). R-046 (+ R-046.1, R-046.2) and R-055 family accepted. IPv6 requirements lowered from M to S (to be confirmed). Open issues 3–5 resolved; 6–12 added. |
+| 2.0.4-draft | 2026-10-19 | Hermes (for team review) | Follow-up of the 2026-10-19 decisions. Glossary: *Interface* (no role), *System Service* (`systemServices` / `listenOn`), *Management Service* (closed list incl. SSH). R-056 and R-058 reworded; new R-017.5 (DHCP on any Interface). Open issue 13 extended with the DHCP→DNS/NTP coherence rule. Schema aligned in the same change: `allowAccess` enum, `role` removed, `systemServices.listenOn`, flat groups, `any`/`any6`/Service `any` as predefined objects, `all` no longer reserved. |
 | 2.0.3-draft | 2026-10-19 | Claude (for team review) | Team decisions of 2026-10-19. Glossary: *Zone*, *RuleSet*, *Address*, *Address Group*, *Service*, *Service Group*, *Default Deny* updated; *System Service* and *Management Service* added. R-010, R-011, R-012, R-013 rewritten, R-010.1 added (flat groups, multi-protocol Service, FQDN and MAC, /32 for hosts); R-014.5, R-046.1, R-046.2, R-017.4, R-031, R-031.1, R-056 reworded. New: R-002.1, R-002.2 (SNAT pool), R-012.1–R-012.5, R-046.3 (RuleSet evaluation order shown to the user), R-058 (listening Interfaces of System Services); proposed R-059 (NTP). Open issues 6–10 and 12 resolved; 11 kept open; 13 and 14 added. Moved to the `songbird-fw` monorepo. |

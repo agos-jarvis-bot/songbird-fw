@@ -24,6 +24,14 @@ spec:
       nat:
         type: "snat"              # translateIpTo omitted => outgoing interface address
 
+    - name: "block-google-fqdn"
+      comment: "FQDN Addresses are not supported by the Data Plane yet (R-012.4): kept disabled"
+      enabled: false
+      source: ["grp-lan"]
+      destination: ["google"]
+      service: ["any"]
+      action: "drop"
+
     - name: "k8s-egress-fixed-ip"
       comment: "Cluster egress pinned to our static IP (IP pool = Address)"
       source: ["k8s-api"]

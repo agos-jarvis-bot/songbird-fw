@@ -29,21 +29,22 @@ spec:
       theme: "dark"
       language: "en"
 
-  ntp:
-    enabled: true
-    servers: ["0.it.pool.ntp.org", "1.it.pool.ntp.org"]
-    serveToInterfaces: ["internal"]
+  systemServices:
+    ntp:
+      enabled: true
+      servers: ["0.it.pool.ntp.org", "1.it.pool.ntp.org"]
+      listenOn: ["internal"]
 
-  dns:
-    mode: "forwarder"
-    upstreams: ["9.9.9.9", "149.112.112.112"]
-    failoverAfterTimeouts: 3
-    localDomain: "example.lan"
-    localRecords:
-      - { name: "nas", address: "192.168.0.30" }
-      - { name: "printer-hall", address: "192.168.2.5" }
-    dns64: true
-    serveToInterfaces: ["internal"]
+    dns:
+      mode: "forwarder"
+      upstreams: ["9.9.9.9", "149.112.112.112"]
+      failoverAfterTimeouts: 3
+      localDomain: "example.lan"
+      localRecords:
+        - { name: "nas", address: "192.168.0.30" }
+        - { name: "printer-hall", address: "192.168.2.5" }
+      dns64: true
+      listenOn: ["internal"]
 
   logging:
     directory: "/var/lib/songbird/log"

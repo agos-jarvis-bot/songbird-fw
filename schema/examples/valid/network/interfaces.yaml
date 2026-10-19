@@ -8,7 +8,6 @@ metadata:
 spec:
   type: "physical"
   device: "enp1s0"
-  role: "external"
   allowAccess: ["ping"]
   ipv4:
     mode: "static"
@@ -38,7 +37,7 @@ spec:
   type: "vlan"
   parent: "trunk"
   vlanId: 10
-  allowAccess: ["https", "ping", "dns", "dhcp", "ntp"]
+  allowAccess: ["https", "ping"]
   ipv4:
     mode: "static"
     addresses: ["192.168.0.1/24"]
@@ -59,7 +58,7 @@ spec:
   type: "vlan"
   parent: "trunk"
   vlanId: 20
-  allowAccess: ["ping", "dns", "dhcp"]
+  allowAccess: ["ping"]
   ipv4:
     mode: "static"
     addresses: ["192.168.2.1/24"]

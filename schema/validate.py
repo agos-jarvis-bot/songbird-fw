@@ -6,6 +6,7 @@ Two layers:
   1. Structural: every YAML document must validate against songbird.schema.json.
   2. Semantic: cross-object rules that JSON Schema cannot express.
 
+Predefined objects (Address any/any6, Service any) are implicit: injected if absent, immutable if present.
 Exit code 0 = valid, 1 = errors, 2 = usage.
 Every error is reported as  <file>:<doc#> <kind>/<name> <rule>: <message>
 """
@@ -22,6 +23,13 @@ SERVICE_NS = {"Service", "ServiceGroup"}
 NETWORK_NS = {"Interface", "Zone"}
 NAMESPACE_OF = ({k: "address" for k in ADDRESS_NS} | {k: "service" for k in SERVICE_NS}
                 | {k: "network" for k in NETWORK_NS} | {"RuleSet": "ruleset", "Color": "color", "System": "system"})
+
+# Shipped predefined objects (RA R-012.1, R-010.1): must exist, must not be changed.
+PREDEFINED_OBJECTS = {
+    ("address", "any"):  {"subnet": "0.0.0.0/0", "predefined": True},
+    ("address", "any6"): {"subnet": "::/0", "predefined": True},
+    ("service", "any"):  {"protocols": [{"protocol": "any"}], "predefined": True},
+}
 
 # Shipped palette: name -> hex. A Color with predefined: true must keep this hex (users annotate, not repaint).
 PREDEFINED_PALETTE = {
@@ -173,35 +181,35 @@ def semantic(objs, errors):
             except ValueError as e:
                 err(o, "cidr", str(e))
 
-    # --- groups: members exist, no cycles
-    def check_group(kind, table, allowed):
-        graph = {o.name: o.spec["members"] for o in objs if o.kind == kind}
+    # --- groups: flat (team decision 2026-10-19): members must be leaf objects of the right kind
+    for kind, table, leaf in (("AddressGroup", addr, "Address"), ("ServiceGroup", svc, "Service")):
         for o in objs:
             if o.kind != kind:
                 continue
             for m in o.spec["members"]:
-                ref(o, table, m, "spec.members[]", allowed)
-        # DFS cycle detection
-        WHITE, GREY, BLACK = 0, 1, 2
-        color = {n: WHITE for n in graph}
+                t = ref(o, table, m, "spec.members[]", {leaf})
+                if t and t.kind == kind:
+                    pass  # already reported as wrong-kind: groups are flat
 
-        def dfs(n, path):
-            color[n] = GREY
-            for m in graph.get(n, []):
-                if m not in graph:
-                    continue
-                if color[m] == GREY:
-                    err(table[n], "group-cycle", "cycle: " + " -> ".join(path + [m]))
-                elif color[m] == WHITE:
-                    dfs(m, path + [m])
-            color[n] = BLACK
-
-        for n in graph:
-            if color[n] == WHITE:
-                dfs(n, [n])
-
-    check_group("AddressGroup", addr, {"Address", "AddressGroup"})
-    check_group("ServiceGroup", svc, {"Service", "ServiceGroup"})
+    # --- predefined objects: present, immutable, and the only ones allowed to use predefined/any-protocol
+    # They ship with the product: if a configuration tree does not contain them they are injected here
+    # (R-012.1 "a fresh Configuration contains both"); if it does, they must be identical.
+    for (ns, name), expected in PREDEFINED_OBJECTS.items():
+        o = byname[ns].get(name)
+        if o is None:
+            kind = "Service" if ns == "service" else "Address"
+            o = Obj("<shipped>", 0, {"apiVersion": "config.songbird-fw.com/v1alpha1", "kind": kind,
+                                     "metadata": {"name": name}, "spec": dict(expected)})
+            byname[ns][name] = o
+            objs.append(o)
+            continue
+        if o.spec != expected:
+            err(o, "predefined-immutable", f"predefined {ns} '{name}' must be exactly {expected}")
+    for o in objs:
+        if o.kind in ("Address", "Service") and o.spec.get("predefined") and (NAMESPACE_OF[o.kind], o.name) not in PREDEFINED_OBJECTS:
+            err(o, "predefined-unknown", f"'{o.name}' is marked predefined but is not a shipped object")
+        if o.kind == "Service" and not o.spec.get("predefined") and any(p["protocol"] == "any" for p in o.spec["protocols"]):
+            err(o, "any-protocol", "protocol 'any' is allowed only in the predefined Service 'any'")
 
     # --- System: singleton, references
     systems = [o for o in objs if o.kind == "System"]
@@ -212,16 +220,17 @@ def semantic(objs, errors):
         adm = o.spec.get("admin") or {}
         for a in adm.get("trustedHosts", []):
             ref(o, addr, a, "spec.admin.trustedHosts[]", {"Address", "AddressGroup"})
+        ss = o.spec.get("systemServices") or {}
         for sec in ("ntp", "dns"):
-            for i in (o.spec.get(sec) or {}).get("serveToInterfaces", []):
-                ref(o, net, i, f"spec.{sec}.serveToInterfaces[]")
+            for i in (ss.get(sec) or {}).get("listenOn", []):
+                ref(o, net, i, f"spec.systemServices.{sec}.listenOn[]")
         for i in ((o.spec.get("logging") or {}).get("anonymizeSourceIp") or {}).get("interfaces", []):
             ref(o, net, i, "spec.logging.anonymizeSourceIp.interfaces[]", {"Interface"})
-        dns = o.spec.get("dns") or {}
+        dns = ss.get("dns") or {}
         if dns.get("dns64") and not (o.spec.get("nat64") or {}).get("enabled"):
-            err(o, "dns64-without-nat64", "spec.dns.dns64 requires spec.nat64.enabled: true")
+            err(o, "dns64-without-nat64", "spec.systemServices.dns.dns64 requires spec.nat64.enabled: true")
         if dns.get("mode") == "recursive" and "upstreams" in dns:
-            err(o, "recursive-upstreams", "spec.dns.upstreams is meaningless in recursive mode")
+            err(o, "recursive-upstreams", "spec.systemServices.dns.upstreams is meaningless in recursive mode")
 
     def single_host(a):
         if "subnet" in a.spec:
@@ -249,14 +258,20 @@ def semantic(objs, errors):
             names.add(r["name"])
             for side in ("source", "destination"):
                 for a in r[side]:
-                    if a == "any":
-                        continue
                     tgt = ref(o, addr, a, f"{fld}.{side}[]", ADDRESS_NS)
                     if tgt and tgt.kind == "Address" and "mac" in tgt.spec and side == "destination":
                         err(o, "mac-as-destination", f"{fld}: MAC Address '{a}' can only be used as source")
             for sname in r["service"]:
-                if sname != "any":
-                    ref(o, svc, sname, f"{fld}.service[]", SERVICE_NS)
+                ref(o, svc, sname, f"{fld}.service[]", SERVICE_NS)
+            # R-012.4: FQDN / MAC Addresses are not supported by the Data Plane yet
+            if r.get("enabled", True):
+                for side in ("source", "destination"):
+                    for a in r[side]:
+                        t = addr.get(a)
+                        members = [t] if (t and t.kind == "Address") else ([addr.get(m) for m in t.spec["members"]] if t else [])
+                        for m in members:
+                            if m and m.kind == "Address" and ("fqdn" in m.spec or "mac" in m.spec):
+                                err(o, "unsupported-address-kind", f"{fld}.{side}: Address '{m.name}' ({'fqdn' if 'fqdn' in m.spec else 'mac'}) is not supported by the Data Plane yet (R-012.4); disable the rule or remove the Address")
             nat = r.get("nat")
             if not nat:
                 continue
@@ -268,11 +283,11 @@ def semantic(objs, errors):
                 elif a and nat["type"] == "dnat" and not single_host(a):
                     err(o, "dnat-single-host", f"{fld}.nat.translateIpTo: '{tip}' must be a single host (/32, /128) or a range")
             if nat["type"] == "dnat":
-                if r["destination"] == ["any"]:
+                if any(addr.get(a) and addr[a].spec.get("predefined") for a in r["destination"]):
                     err(o, "dnat-any-destination", f"{fld}: a dnat rule needs an explicit destination (the public address), not 'any'")
                 tst = nat.get("translateServiceTo")
                 if tst is not None:
-                    if r["service"] == ["any"]:
+                    if any(svc.get(x) and svc[x].spec.get("predefined") for x in r["service"]):
                         err(o, "dnat-any-service", f"{fld}: translateServiceTo requires an explicit service, not 'any'")
                     sv = ref(o, svc, tst, f"{fld}.nat.translateServiceTo", {"Service"})
                     if sv:
@@ -286,11 +301,12 @@ def semantic(objs, errors):
                                 x = svc.get(sname)
                                 if x and x.kind == "Service":
                                     rule_protos |= {pe["protocol"] for pe in x.spec["protocols"]}
-                                elif x:  # group: expand one level is enough for the check to be useful
+                                elif x:  # flat group
                                     for m in x.spec["members"]:
                                         y = svc.get(m)
                                         if y and y.kind == "Service":
                                             rule_protos |= {pe["protocol"] for pe in y.spec["protocols"]}
+                            rule_protos.discard("any")
                             if rule_protos and protos[0]["protocol"] not in rule_protos:
                                 err(o, "dnat-protocol-mismatch", f"{fld}: translateServiceTo uses {protos[0]['protocol']} but the rule's service has {sorted(rule_protos)}")
 

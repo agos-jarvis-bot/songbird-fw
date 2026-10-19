@@ -3,4 +3,5 @@ kind: "System"
 metadata: { name: "system" }
 spec:
   hostname: "fw01"
-  dns: { mode: "forwarder", upstreams: ["9.9.9.9"], dns64: true }
+  systemServices:
+    dns: { mode: "forwarder", upstreams: ["9.9.9.9"], dns64: true }
