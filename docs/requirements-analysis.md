@@ -31,8 +31,8 @@ Out of scope for the first releases (see §8 – Excluded requirements): VPN ter
 Project team (design, development, test), external reviewers, early adopters evaluating the product roadmap.
 
 ### 1.4 References
-- `songbird-architecture/` – architectural design: `domain-model.md` (configuration objects and constraints `DM-NN`), `components.md` (components and the requirement → component matrix), `reconciliation.md`, `dataplane.md` (eBPF Data Plane), `adr/` (Architecture Decision Records).
-- `songbird-yaml-schema/` – configuration schema (`v1alpha1`) and validator prototype.
+- `docs/architecture/` – architectural design: `domain-model.md` (configuration objects and constraints `DM-NN`), `components.md` (components and the requirement → component matrix), `reconciliation.md`, `dataplane.md` (eBPF Data Plane), `adr/` (Architecture Decision Records).
+- `schema/` – configuration schema (`v1alpha1`) and validator prototype.
 - `songbird-prototypes/` – proof-of-concept code (XDP firewall, Hadron OS image, Go feasibility study, Web UI with a Control Plane slice).
 - RFC 2131 (DHCP), RFC 8415 (DHCPv6), RFC 4861 (NDP), RFC 4862 (SLAAC), RFC 6146 (NAT64), RFC 6147 (DNS64), RFC 6238 (TOTP), RFC 8555 (ACME), RFC 5798 (VRRP), RFC 4035 (DNSSEC).
 

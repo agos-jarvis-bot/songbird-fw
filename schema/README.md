@@ -1,9 +1,9 @@
-# songbird-yaml-schema — v1alpha1
+# Configuration schema — v1alpha1
 
 Formal schema for the Songbird configuration (RA constraint **C-005**, requirements **R-020.2 / R-020.3 / R-052**).
 
 ```
-schema/
+schema/                     (this directory)
   songbird.schema.json      entry point: dispatches on `kind`
   common.schema.json        shared $defs (names, CIDR, ports, metadata, ...)
   system.schema.json        kind: System         (singleton, global settings — FortiGate "config system *")

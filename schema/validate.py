@@ -15,7 +15,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 from referencing import Registry, Resource
 import json
 
-SCHEMA_DIR = pathlib.Path(__file__).parent / "schema"
+SCHEMA_DIR = pathlib.Path(__file__).parent
 
 ADDRESS_NS = {"Address", "AddressGroup"}
 SERVICE_NS = {"Service", "ServiceGroup"}
