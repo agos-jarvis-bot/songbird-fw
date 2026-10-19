@@ -7,6 +7,7 @@ Two layers:
   2. Semantic: cross-object rules that JSON Schema cannot express.
 
 Predefined objects (Address any/any6, Service any) are implicit: injected if absent, immutable if present.
+Multi-document YAML files are accepted on input; one object per file is only the canonical export layout.
 Exit code 0 = valid, 1 = errors, 2 = usage.
 Every error is reported as  <file>:<doc#> <kind>/<name> <rule>: <message>
 """
@@ -32,9 +33,11 @@ PREDEFINED_OBJECTS = {
 }
 
 # Shipped palette: name -> hex. A Color with predefined: true must keep this hex (users annotate, not repaint).
-PREDEFINED_PALETTE = {
-    "green": "#2E7D32", "blue": "#1565C0", "red": "#C62828", "orange": "#EF6C00",
-    "purple": "#6A1B9A", "teal": "#00838F", "grey": "#616161",
+PREDEFINED_PALETTE = {  # 16 colours (team decision 2026-10-19); the original 7 keep their hex
+    "red": "#C62828", "pink": "#AD1457", "purple": "#6A1B9A", "indigo": "#283593",
+    "blue": "#1565C0", "cyan": "#0097A7", "teal": "#00838F", "green": "#2E7D32",
+    "light-green": "#558B2F", "lime": "#9E9D24", "yellow": "#F9A825", "amber": "#FF8F00",
+    "orange": "#EF6C00", "deep-orange": "#D84315", "brown": "#4E342E", "grey": "#616161",
 }
 
 
@@ -231,6 +234,47 @@ def semantic(objs, errors):
             err(o, "dns64-without-nat64", "spec.systemServices.dns.dns64 requires spec.nat64.enabled: true")
         if dns.get("mode") == "recursive" and "upstreams" in dns:
             err(o, "recursive-upstreams", "spec.systemServices.dns.upstreams is meaningless in recursive mode")
+        # --- DHCP: one block per Interface (open issue 13 resolved), R-017.x, coherence R-017.6
+        def listens(service, ifname):
+            lst = (ss.get(service) or {}).get("listenOn", [])
+            return ifname in lst or zone_of.get(ifname) in lst
+        for ifname, pool in (ss.get("dhcp") or {}).items():
+            fld = f"spec.systemServices.dhcp.{ifname}"
+            itf = ref(o, net, ifname, fld, {"Interface"})
+            if not itf:
+                continue
+            v4 = itf.spec.get("ipv4") or {}
+            if v4.get("mode") != "static":
+                err(o, "dhcp-needs-static", f"{fld}: Interface '{ifname}' has no static IPv4 address; a DHCP server needs one")
+                continue
+            nets = [_cidr(a) for a in v4["addresses"]]
+            own = {ipaddress.ip_interface(a).ip for a in v4["addresses"]}
+            inside = lambda ip: any(ipaddress.ip_address(ip) in n for n in nets)
+            a, b = ipaddress.ip_address(pool["range"]["start"]), ipaddress.ip_address(pool["range"]["end"])
+            if a > b:
+                err(o, "dhcp-range-order", f"{fld}.range: start must be <= end")
+            if not (inside(a) and inside(b)):
+                err(o, "dhcp-range-subnet", f"{fld}.range: must lie inside the Interface subnet(s) {[str(n) for n in nets]}")
+            if any(x in own for x in (a, b)) or any(a <= x <= b for x in own):
+                err(o, "dhcp-range-own-address", f"{fld}.range: contains the firewall's own address")
+            if "gateway" in pool and not inside(pool["gateway"]):
+                err(o, "dhcp-gateway-subnet", f"{fld}.gateway: not inside the Interface subnet")
+            seen_mac, seen_ip = set(), set()
+            for k, rsv in enumerate(pool.get("reservations", [])):
+                if not inside(rsv["address"]):
+                    err(o, "dhcp-reservation-subnet", f"{fld}.reservations[{k}]: address not inside the Interface subnet")
+                m = rsv["mac"].lower()
+                if m in seen_mac: err(o, "dhcp-reservation-dup", f"{fld}.reservations[{k}]: duplicate MAC {rsv['mac']}")
+                if rsv["address"] in seen_ip: err(o, "dhcp-reservation-dup", f"{fld}.reservations[{k}]: duplicate address {rsv['address']}")
+                seen_mac.add(m); seen_ip.add(rsv["address"])
+            # coherence (R-017.6): advertising the firewall itself requires the service to listen there
+            for key, service in (("dnsServers", "dns"), ("ntpServers", "ntp")):
+                advertised = pool.get(key)
+                uses_self = (advertised is None) if key == "dnsServers" else bool(advertised and any(ipaddress.ip_address(x) in own for x in advertised))
+                if advertised is not None:
+                    uses_self = any(ipaddress.ip_address(x) in own for x in advertised)
+                if uses_self and not listens(service, ifname):
+                    err(o, "dhcp-advertises-silent-service", f"{fld}.{key}: the pool advertises the firewall as {service.upper()} server but '{ifname}' (or its Zone) is not in systemServices.{service}.listenOn (R-017.6)")
 
     def single_host(a):
         if "subnet" in a.spec:

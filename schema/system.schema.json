@@ -727,7 +727,7 @@
       }
     },
     "systemServices": {
-      "description": "System Services: network services the firewall provides to its networks (R-058). Each declares where it listens with listenOn. DHCP server: pending RA open issue 13.",
+      "description": "System Services: network services the firewall provides to its networks (R-058). dns and ntp declare where they listen with listenOn; dhcp has one block per Interface.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -736,6 +736,107 @@
         },
         "ntp": {
           "$ref": "#/$defs/ntp"
+        },
+        "dhcp": {
+          "$ref": "#/$defs/dhcp"
+        }
+      }
+    },
+    "dhcpPool": {
+      "description": "DHCPv4 server for one Interface (R-017…R-017.5). The key of the block is the Interface name; the server listens on that Interface only. DHCPv6 / prefix delegation (R-017.4) is configured on the Interface and is out of scope here.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "range"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "range": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "start",
+            "end"
+          ],
+          "properties": {
+            "start": {
+              "$ref": "common.schema.json#/$defs/ipv4Address"
+            },
+            "end": {
+              "$ref": "common.schema.json#/$defs/ipv4Address"
+            }
+          },
+          "description": "Inclusive pool, inside the Interface's static IPv4 subnet (validator check)."
+        },
+        "leaseTime": {
+          "$ref": "common.schema.json#/$defs/duration",
+          "default": "12h",
+          "description": "R-017.1."
+        },
+        "gateway": {
+          "$ref": "common.schema.json#/$defs/ipv4Address",
+          "description": "Default: the Interface's own IPv4 address."
+        },
+        "dnsServers": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.schema.json#/$defs/ipv4Address"
+          },
+          "description": "Default: the Interface's own IPv4 address. If the firewall's address is advertised, the Interface (or its Zone) must be in systemServices.dns.listenOn (validator check, R-017.6)."
+        },
+        "ntpServers": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.schema.json#/$defs/ipv4Address"
+          },
+          "description": "Same coherence rule as dnsServers, against systemServices.ntp.listenOn."
+        },
+        "domain": {
+          "$ref": "common.schema.json#/$defs/fqdn"
+        },
+        "reservations": {
+          "type": "array",
+          "uniqueItems": true,
+          "description": "Static bindings by MAC (R-017.2). Addresses must be inside the Interface subnet; MAC and address unique within the pool.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "mac",
+              "address"
+            ],
+            "properties": {
+              "mac": {
+                "$ref": "common.schema.json#/$defs/macAddress"
+              },
+              "address": {
+                "$ref": "common.schema.json#/$defs/ipv4Address"
+              },
+              "hostname": {
+                "$ref": "common.schema.json#/$defs/fqdnOrLabel"
+              }
+            }
+          }
+        }
+      }
+    },
+    "dhcp": {
+      "description": "DHCP server, one block per Interface, keyed by Interface name (RA open issue 13, resolved 2026-10-19). Every listed Interface must exist and have a static IPv4 address.",
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "patternProperties": {
+        "^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$": {
+          "$ref": "#/$defs/dhcpPool"
         }
       }
     }
