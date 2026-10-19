@@ -26,7 +26,7 @@ The model covers **IPv4 only**. IPv6 and Router Advertisement are deferred (see 
 - **Member Interfaces of a Zone may be used on their own** in RuleSets. The applicable RuleSets are evaluated from the most to the least specific (DM-42); `from` and `to` are always different objects, and an Interface differs from its Zone (DM-06, DM-07, DM-38, DM-39 rewritten).
 - **Groups are flat; a Service has one or more protocol entries**, and a ServiceGroup may mix protocols (Service, DM-17, DM-18 rewritten).
 - **Address types**: `subnet`, `range`, `fqdn`, `mac`. The `ip` type is removed: a single host is a `/32` subnet. `fqdn` and `mac` are in release 1.0 but rejected in enabled Policies until the Data Plane supports them (DM-43); `mac` is valid only as source (DM-44).
-- **`any` and `any6`** are predefined Addresses (`0.0.0.0/0`, `::/0`); `any` is also a predefined Service. `all` and `none` stay reserved (DM-21 rewritten).
+- **`any` and `any6`** are predefined Addresses (`0.0.0.0/0`, `::/0`); `any` is also a predefined Service, a different object with the same name. `all` and `none` stay reserved (DM-21 rewritten).
 - **`Address.interface` is a restriction**, as in FortiGate (DM-12 confirmed).
 - **StaticRoute**: routes sharing destination, distance and priority stay rejected (no ECMP); defaults `distance` 10 and `priority` 1 are decided.
 
@@ -232,7 +232,7 @@ Adopted from `songbird-yaml-schema` (design decisions 1, 2, 8 and 10).
 Consequences on this model:
 
 - Predefined Services use valid names: `http`, `https`, `dns`, … (no longer `HTTP`, `ALL`).
-- "Any address" is the predefined Address `any` (`0.0.0.0/0`), and `any6` (`::/0`) once IPv6 is supported; "any service" is the predefined Service `any`. They are ordinary references, not keywords. No object may be named `all`.
+- "Any address" is the predefined Address `any` (`0.0.0.0/0`), and `any6` (`::/0`) once IPv6 is supported; "any service" is the predefined Service `any`. They are ordinary references, not keywords. The Address `any` and the Service `any` are **two different objects with the same name**: they live in different namespaces (*address* and *service*, DM-01), and the field of the reference decides which one is meant (`source`, `destination` → Address; `service` → Service). No object may be named `all` or `none`.
 - The derived name `<interface> addresses` contains a space and is not a valid name. Its new form is still open (see InterfaceAddresses).
 
 **Legend.** Solid arrow = reference (by name in the YAML). Filled diamond = composition (nested in the YAML). Hollow diamond = aggregation (a Zone groups existing Interfaces). Triangle = specialisation. The Policies are composed in their RuleSet: they are nested in its YAML. `<<derived>>` = computed concept with no YAML file of its own.
@@ -477,7 +477,7 @@ Other objects reference a Color by name in `color`, never by a literal hex.
 | DM-18 | A ServiceGroup has at least one member and no duplicates; its members are Services only (groups are flat) and may have different protocols. |
 | DM-19 | *Withdrawn in 0.6*: replaced by the warning in DM-40. |
 | DM-20 | *Withdrawn in 0.6*: `translateServiceTo` is a single port (DM-13); a range in the original `service` is translated to that port. |
-| DM-21 | Predefined objects are YAML files generated at setup with `predefined: true`: the Addresses `any` (`0.0.0.0/0`) and `any6` (`::/0`), the Services `any` (every protocol and port), `http`, `https`, `dns`, …, and the predefined Colors. The Validator checks they are present and rejects edits of their defining fields and deletions; `comment` stays editable. |
+| DM-21 | Predefined objects are YAML files generated at setup with `predefined: true`: the Addresses `any` (`0.0.0.0/0`) and `any6` (`::/0`), the Services `any` (every protocol and port; a different object from the Address `any`, in another namespace), `http`, `https`, `dns`, …, and the predefined Colors. The Validator checks they are present and rejects edits of their defining fields and deletions; `comment` stays editable. |
 
 ### Routing
 

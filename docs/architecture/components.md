@@ -186,7 +186,7 @@ Every requirement has exactly one **responsible** component, which carries the v
 |---|---|---|
 | R-009, R-009.1, R-009.2 | Web UI | API Server, Compiler (omits disabled Policies) |
 | R-010, R-011, R-012, R-013, R-012.4, R-012.5 | Validator | Compiler |
-| R-012.1 | Config Manager (predefined `any`, `any6`) | Validator |
+| R-010.1, R-012.1 | Config Manager (predefined Service `any`, Addresses `any`, `any6`) | Validator |
 | R-012.2 | Compiler (FQDN sets as runtime facts) | DNS Service (resolution), Data Plane |
 | R-012.3 | Data Plane (source MAC match) | Validator (source only) |
 | R-014 | Validator | — |
