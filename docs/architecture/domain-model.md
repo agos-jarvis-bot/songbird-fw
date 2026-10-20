@@ -384,7 +384,7 @@ As in the schema.
 
 | Attribute | Type | Req. | Notes |
 |---|---|---|---|
-| protocol | enum (tcp, udp, sctp, icmp, icmpv6, ip) | yes | `icmpv6` is deferred with IPv6 |
+| protocol | enum (tcp, udp, sctp, icmp, icmpv6, ip, any) | yes | `icmpv6` is deferred with IPv6 |
 | port | port or range | for tcp/udp/sctp | forbidden for the other protocols (DM-17) |
 | icmpType, icmpCode | integer 0–255 | no | only for icmp/icmpv6 |
 | protocolNumber | integer 0–255 | for `ip` | raw IP protocol number |
@@ -557,7 +557,6 @@ Decisions of 2026-10-19 that the schema does not reflect yet. The schema is main
 ## Open questions
 
 - **DHCP server**: keep it in the Interface (`dhcp`) or move it to SystemServices with the DNS and NTP servers (RA open issue #13).
-- **Service `any`**: how the predefined Service is written in the schema (e.g. a single `ip` entry meaning every protocol) is to be agreed with the schema owner.
 - **`sourcePort`** in ProtocolEntry exists in the schema but not in the Data Plane classifier: keep it (and add a dimension) or drop it.
 - **InterfaceAddresses name**: a format that cannot collide with user names, e.g. a reference syntax such as `lan1:addresses` (needs a schema extension, since `:` is not allowed in names).
 - **DnsService details**: forwarder/recursor settings (R-018), local names (R-018.2) and failover (R-034) still to be modelled.
