@@ -18,11 +18,11 @@ This document describes the internal design of the **Data Plane**: the eBPF prog
 | NAT | R-002, R-003 |
 | Policies | R-014, R-014.1–R-014.4, R-033, R-046, R-046.1, R-046.2 (Zones and evaluation order) |
 | Local-in | R-056 (Management Services), R-058 (System Services) |
-| Stateful filtering | R-045, R-045.1, R-045.2 (proposed) |
-| Apply and lifecycle | R-020.6, R-033.1, R-036, R-036.1, R-054 (proposed) |
+| Stateful filtering | R-045, R-045.1, R-045.2 |
+| Apply and lifecycle | R-020.6, R-033.1, R-036, R-036.1, R-054 |
 | Events | R-026, R-026.1 |
-| Security | R-039 (enforcement), R-053 (proposed) |
-| Performance | R-047, R-048, R-049 (proposed, targets to be agreed) |
+| Security | R-039 (enforcement), R-053 |
+| Performance | R-047, R-048, R-049 (proposed, deferred until the benchmark) |
 | Constraint | C-001 |
 | **Deferred** (IPv6) | R-001.3, R-001.4, R-005, R-006, R-006.1, R-006.2 |
 

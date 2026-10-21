@@ -402,7 +402,7 @@ Network services that the firewall provides to the hosts of its networks. Each o
 | Attribute | Type | Req. | Notes |
 |---|---|---|---|
 | dns | DnsService | no | DNS server (R-018) |
-| ntp | NtpService | no | NTP server (R-059, proposed) |
+| ntp | NtpService | no | NTP server (R-059) |
 
 **DnsService** and **NtpService** (composed in SystemServices):
 

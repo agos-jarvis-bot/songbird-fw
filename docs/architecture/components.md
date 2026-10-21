@@ -278,7 +278,7 @@ Every requirement has exactly one **responsible** component, which carries the v
 | R-054 | Data Plane | Applier (generation swap) |
 | R-055 | Web UI | Validator |
 | R-055.1, R-055.2 | Validator | Web UI |
-| R-059 | NTP Service (to be added to the components if R-059 is accepted) | Compiler, Data Plane (local-in) |
+| R-059 | NTP Service (to be added to the components) | Compiler, Data Plane (local-in) |
 
 ### Constraints
 
