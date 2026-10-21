@@ -2,14 +2,14 @@
 
 | | |
 |---|---|
-| Status | Proposed (depends on acceptance of R-054) |
+| Status | Proposed (R-054 accepted in RA 2.0.6) |
 | Date | 2026-10-17 |
 | Deciders | Songbird team |
-| Related | R-054 (proposed), R-020.6, R-026; dataplane.md §9; dataplane v2 open question 3 |
+| Related | R-054, R-020.6, R-026; dataplane.md §9; dataplane v2 open question 3 |
 
 ## Context
 
-When a new configuration is applied, Flows accepted by the previous Policies may no longer be permitted. Because replies are accepted by connection-tracking state (R-045), such a Flow would otherwise continue until it times out, which may be an hour for TCP. R-054 (proposed) asks that it be terminated at its next packet, which is also the FortiGate default.
+When a new configuration is applied, Flows accepted by the previous Policies may no longer be permitted. Because replies are accepted by connection-tracking state (R-045), such a Flow would otherwise continue until it times out, which may be an hour for TCP. R-054 requires that it be terminated at its next packet, which is also the FortiGate default.
 
 ## Options considered
 

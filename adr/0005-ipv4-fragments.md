@@ -2,14 +2,14 @@
 
 | | |
 |---|---|
-| Status | Proposed (depends on acceptance of R-053) |
+| Status | Proposed (R-053 accepted in RA 2.0.6) |
 | Date | 2026-10-17 |
 | Deciders | Songbird team |
-| Related | R-053 (proposed), R-018.5, R-033; dataplane.md §5; dataplane v2 open question 4 |
+| Related | R-053, R-018.5, R-033; dataplane.md §5; dataplane v2 open question 4 |
 
 ## Context
 
-Only the first fragment of an IPv4 datagram carries the L4 header. Non-initial fragments have no ports, so they cannot be classified or matched to a Flow by tuple. Fragmented traffic is rare on modern networks but still used, and fragment floods are a known attack. R-053 (proposed) asks for a configurable drop, default drop.
+Only the first fragment of an IPv4 datagram carries the L4 header. Non-initial fragments have no ports, so they cannot be classified or matched to a Flow by tuple. Fragmented traffic is rare on modern networks but still used, and fragment floods are a known attack. R-053 requires a configurable drop, default drop.
 
 ## Options considered
 

@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Document** | RA – Requirements Analysis |
-| **Version** | 2.0.5-draft |
+| **Version** | 2.0.6-draft |
 | **Status** | Draft for team review |
 | **Supersedes** | 2.0.2-draft. Earlier versions are kept as Git tags, see §12 |
 | **License** | AGPL-3.0 |
@@ -210,6 +210,11 @@ Ordered by identifier. **Scope**: U/G. **Type**: F/N. **Pri**: M/S/C.
 | R-046.1 | G | F | M | – | An Interface that belongs to a Zone may also be referenced on its own in a RuleSet. For a Flow entering Interface *i* and leaving Interface *o* (*i* ≠ *o*), the applicable RuleSets shall be evaluated from the most to the least specific — *i → o*, *i → Zone(o)*, *Zone(i) → o*, *Zone(i) → Zone(o)* — skipping those that do not exist, and the first matching Policy across them shall determine the verdict. | **T-I** – `lan1` and `lan2` in `internal`; RuleSet `lan1 → wan1` drops host A, RuleSet `internal → wan1` accepts all: host A on `lan1` is dropped, host B on `lan1` and hosts on `lan2` are accepted. **T-U** – fuzz test: eBPF classifier vs. reference Go classifier with overlapping Interface and Zone RuleSets. |
 | R-046.2 | G | F | S | – | For traffic between two Interfaces of the same Zone that matches no Policy in the applicable RuleSets, the Zone shall define whether it is accepted or denied, with deny as default. | **T-I** – Zone with default setting and no RuleSet: `lan1 → lan2` is dropped; with *allow*: accepted; with *allow* and a RuleSet `lan1 → lan2` that drops host A: host A is dropped, others accepted; all produce Flow Events. |
 | R-046.3 | U | F | M | Usability | The user interface and the command-line tool shall show, for every ordered pair of Interfaces, the RuleSets that apply to it in evaluation order (R-046.1), and the user interface shall show this order when a RuleSet is created or edited. | **T-S** – with `lan1 → wan1` and `internal → wan1` defined, the pair `lan1 → wan1` lists both in this order; `songbird` CLI prints the same list. |
+| **R-045** | G | F | M | – | The system shall be Stateful: reply packets of an accepted Flow shall be forwarded without re-evaluating Policies, and packets that do not belong to an accepted Flow and do not match an accept Policy shall be dropped. | **T-I** – TCP connection accepted LAN→WAN; SYN-ACK from WAN is forwarded with no WAN→LAN Policy; an unsolicited WAN→LAN SYN is dropped. |
+| R-045.1 | G | F | M | – | The system shall treat ICMP/ICMPv6 error messages whose embedded header refers to an active Flow as part of that Flow (RELATED). | **T-I** – Path MTU Discovery works across the firewall with a reduced-MTU link downstream. |
+| R-045.2 | G | N | M | Performance | Flow timeouts shall be configurable, with defaults: TCP established 3600 s, TCP handshake 30 s, TCP closing 10 s, UDP 60 s (180 s bidirectional), ICMP 30 s. | **T-U** – default values present in compiled state; **T-I** – idle UDP Flow expires after the configured time. |
+| **R-053** | G | F | M | Security | Policies shall be able to drop IPv4 packets that are not initial fragments, as a configurable behaviour (default: drop). | **T-I** – fragmented UDP datagram; with default settings non-initial fragments are dropped and counted. *(Resolves `dataplane.md` open question 4.)* |
+| **R-054** | G | F | S | Security | When a Policy change no longer permits an active Flow, the Flow shall be terminated at its next packet. | **T-I** – long-lived TCP Flow; change Policy to drop; next segment is dropped and a `FLOW_END` event with reason `policy-change` is emitted. *(Resolves `dataplane.md` open question 3; FortiGate default behaviour.)* |
 | **R-015** | U | F | M | Usability | The user interface shall present Interfaces as a hierarchical tree, with Logical Interfaces nested under their Physical Interface. | **T-S** – with `eth0` and `eth0.10`, `eth0.20` present, the tree shows two children under `eth0`. |
 | R-015.1 | U | F | M | Usability | The Interface tree shall reflect the addition or removal of a Logical Interface within 5 s of the kernel event. | **T-S** – add a VLAN sub-interface via netlink; the tree shows it within 5 s (measured by browser automation). |
 
@@ -218,6 +223,8 @@ Ordered by identifier. **Scope**: U/G. **Type**: F/N. **Pri**: M/S/C.
 > **Note (v2.0.3):** Team decisions of 2026-10-19. Groups are flat and a Service may have several protocols (R-010, R-011, R-013; open issue #6). FQDN and MAC Addresses are in release 1.0 (R-012.2, R-012.3) and rejected in Policies until the Data Plane supports them (R-012.4; open issue #7). A single host is a /32 subnet; `any` and `any6` are predefined Addresses (R-012.1). An Interface of a Zone may be used on its own, with the more specific RuleSet evaluated first (R-046.1, R-046.3; open issue #10). A Policy has no log setting: every Flow produces an Event (R-026; open issue #8).
 >
 > **R-014.3 and R-014.4 are new in v2**: v1 defined Service Groups (RGFM11) but never stated they are usable in Policies, and never stated the first-match semantics on which the whole classifier design relies.
+
+> **Note (v2.0.6):** R-045 (+ R-045.1, R-045.2), R-053 and R-054 accepted from §7 with their proposed priorities (open issue #2).
 
 ### 6.3 Network services
 
@@ -239,7 +246,10 @@ Ordered by identifier. **Scope**: U/G. **Type**: F/N. **Pri**: M/S/C.
 | R-018.6 | G | F | S | Interoperability | The system shall provide DNS64 (RFC 6147) synthesising AAAA records for IPv4-only names, consistent with the NAT64 prefix. | **T-I** – `dig AAAA` of an A-only name returns an address inside the NAT64 prefix. |
 | **R-034** | G | N | S | Reliability | The system shall fail over to the secondary upstream DNS server after 3 consecutive timeouts of the primary. | **T-I** – black-hole the primary; 4th query is answered by the secondary. |
 | R-034.1 | G | N | S | Reliability | Failover shall complete within 5 s of detecting the primary timeout, without failing in-flight queries. | **T-I** – as R-034, timing measured; no SERVFAIL returned to the client. |
-| **R-058** | G | F | M | Security | For each System Service (the DNS server, and the NTP server if R-059 is accepted), the system shall allow configuring the Interfaces or Zones on which it listens (`systemServices.<service>.listenOn`; a Zone stands for all its member Interfaces); the service shall be reachable only through those Interfaces, without a Policy, and on no Interface by default. | **T-I** – DNS server listening on `internal` only: `dig` from `lan1` succeeds, from `wan1` times out with no Policy involved; removing `internal` from the list stops answers on `lan1`. |
+| **R-058** | G | F | M | Security | For each System Service that listens on Interfaces (the DNS server and the NTP server, R-059), the system shall allow configuring the Interfaces or Zones on which it listens (`systemServices.<service>.listenOn`; a Zone stands for all its member Interfaces); the service shall be reachable only through those Interfaces, without a Policy, and on no Interface by default. | **T-I** – DNS server listening on `internal` only: `dig` from `lan1` succeeds, from `wan1` times out with no Policy involved; removing `internal` from the list stops answers on `lan1`. |
+| **R-059** | G | F | S | Interoperability | The system shall synchronise its clock with configured NTP servers and shall be able to act as an NTP server for its networks, as a System Service (R-058). | **T-I** – clock offset below 100 ms from the test NTP server; a client in the LAN netns synchronises with the firewall. |
+
+> **Note (v2.0.6):** R-059 accepted from §7 (open issue #14): the schema already has `systemServices.ntp`.
 
 ### 6.4 Configuration, GitOps and lifecycle
 
@@ -254,6 +264,7 @@ Ordered by identifier. **Scope**: U/G. **Type**: F/N. **Pri**: M/S/C.
 | R-020.5 | G | F | M | Security | Secrets in the Configuration (e.g. Repository SSH keys, API tokens, SMTP passwords) shall be stored encrypted at rest. | **I** – no plaintext secret in exported YAML (grep for known test secret); **A** – encryption scheme reviewed (AEAD, key not stored alongside data). |
 | R-020.6 | G | F | M | Reliability | Apply shall be atomic: if any part of a new Configuration fails to activate, the system shall restore the previous running state completely. | **T-I** – Configuration where the last block is deliberately unapplicable (e.g. duplicate address); after Apply, Data Plane and kernel state equal a snapshot taken before. |
 | R-020.7 | G | F | M | Maintainability | The export shall write one object per file, named after the object, in one directory per kind, so that Git diffs and conflicts are confined to the object that changed. The import shall accept any file layout, including files containing several objects. | **T-U** – export of the example Configuration produces exactly one file per object in the documented layout; importing that tree, and importing the same objects concatenated in a single multi-document file, yield the same Configuration (R-020.1). |
+| **R-052** | G | F | M | Maintainability | The system shall provide a command-line tool `songbird validate <dir>` that validates a Configuration directory against the Schema and exits non-zero on error, usable in CI pipelines independently of the appliance. | **T-U** – corpus test as R-020.2 through the CLI. |
 | **R-021** | U | F | S | Interoperability, Flexibility | Every Configuration change saved through the user interface shall produce a Git commit in the local Repository with a structured message (author, timestamp, summary of changed objects). | **T-S** – after a UI change, `git log -1` shows the commit with the expected message structure and the diff touches only the changed objects. |
 | R-021.1 | G | F | S | Interoperability | If a remote Repository is configured, each commit shall be pushed automatically. | **T-S** – remote bare repo receives the commit within 10 s. |
 | R-021.2 | G | F | S | Reliability | If push fails, the system shall retry every 60 s and shall display a notification banner in the user interface until the push succeeds. | **T-S** – make the remote unreachable; banner appears; restore the remote; push succeeds at the next retry and the banner disappears. |
@@ -269,6 +280,8 @@ Ordered by identifier. **Scope**: U/G. **Type**: F/N. **Pri**: M/S/C.
 | **R-040** | U | F | S | Usability | The user interface shall provide an action to pull the Configuration from the remote Repository. | **T-S** – commit on the remote; click Pull; local Configuration updated and applied. |
 | **R-041** | U | F | S | Usability | The user interface shall provide an action to push the local Configuration to the remote Repository. | **T-S** – click Push with pending commits; remote updated. |
 | **R-042** | U | F | S | Usability | The user interface shall provide a diff view to resolve conflicts between local and remote Configuration during a pull. | **T-S** – create a conflicting change on both sides; Pull shows a side-by-side diff; choosing a resolution yields a valid, applied Configuration. |
+
+> **Note (v2.0.6):** R-052 accepted from §7 and promoted from S to M: it is in the 0.1 scope and is the tool behind the 0.1 exit criterion on the schema corpus (open issue #2).
 
 > **Note (v2):** v1 marked R-040/041/042 as "Security"; they are usability features of the GitOps workflow. Scope corrected from G to U (they describe UI actions).
 
@@ -315,8 +328,12 @@ Ordered by identifier. **Scope**: U/G. **Type**: F/N. **Pri**: M/S/C.
 | R-032.1 | U | F | S | Usability | The user interface shall include a diagnostics page showing the real-time status of each Subsystem. | **T-S** – stop a Subsystem; page shows it as stopped within 5 s. |
 | **R-037** | G | N | M | Compliance | The system shall allow configuration of an IP pseudonymisation (masking) policy for source addresses in the Traffic Log, to support GDPR data-minimisation. | **T-U** – with masking enabled, persisted events contain the masked form (e.g. last 8/80 bits zeroed) and never the original address. |
 | R-037.1 | G | N | M | Compliance | Pseudonymisation shall be configurable per Interface. | **T-U** – masking enabled on LAN only; LAN events masked, WAN events not. |
+| **R-050** | G | F | S | Interoperability | The system shall forward Traffic Log and Audit Log events to a remote syslog server (RFC 5424 over TLS). | **T-S** – syslog-ng sink in CI receives structured events. |
+| **R-051** | G | F | S | Interoperability | The system shall expose metrics in Prometheus exposition format. | **T-I** – `curl /metrics` parses with the Prometheus client; per-Policy counters present. |
 
 > **Note (v2):** v1 nested the Live Traffic Log (RUFS27.4, S), its filters (RUFC27.5, C) and log persistence (RGNM27.6, M) under the charts requirement (RUFC27, C), violating the parent/child priority rule. They are now independent requirements R-028 and R-029.
+>
+> **Note (v2.0.6):** R-050 and R-051 accepted from §7 as Should (open issue #2); they are not tied to a specific release.
 
 ### 6.8 Management interface security
 
@@ -358,22 +375,15 @@ Ordered by identifier. **Scope**: U/G. **Type**: F/N. **Pri**: M/S/C.
 
 ## 7. Proposed additions (to be discussed by the team)
 
-The following requirements are **not** part of v1. They are proposed because the architecture (`dataplane.md`) or the product goal (FortiGate-like simplicity) implicitly depends on them. They are listed with a suggested priority; accept, modify or reject them explicitly. R-046 and R-055 were accepted in 2.0.2 and moved to §6.2 and §6.9.
+The following requirements are **not** part of v1. They are proposed because the architecture (`dataplane.md`) or the product goal (FortiGate-like simplicity) implicitly depends on them. They are listed with a suggested priority; accept, modify or reject them explicitly. R-046 and R-055 were accepted in 2.0.2 and moved to §6.2 and §6.9. R-045, R-050…R-054 and R-059 were accepted in 2.0.6 and moved to §6 (open issues #2 and #14).
+
+The performance requirements below are **deferred**: they are kept here until a first benchmark on the reference platform gives a basis for their numeric targets (open issue #1, ADR-0006, ADR-0007).
 
 | ID | Scope | Type | Pri | Quality | Proposed requirement | Verification |
 |---|---|---|---|---|---|---|
-| **R-045** | G | F | M | – | The system shall be Stateful: reply packets of an accepted Flow shall be forwarded without re-evaluating Policies, and packets that do not belong to an accepted Flow and do not match an accept Policy shall be dropped. | **T-I** – TCP connection accepted LAN→WAN; SYN-ACK from WAN is forwarded with no WAN→LAN Policy; an unsolicited WAN→LAN SYN is dropped. |
-| R-045.1 | G | F | M | – | The system shall treat ICMP/ICMPv6 error messages whose embedded header refers to an active Flow as part of that Flow (RELATED). | **T-I** – Path MTU Discovery works across the firewall with a reduced-MTU link downstream. |
-| R-045.2 | G | N | M | Performance | Flow timeouts shall be configurable, with defaults: TCP established 3600 s, TCP handshake 30 s, TCP closing 10 s, UDP 60 s (180 s bidirectional), ICMP 30 s. | **T-U** – default values present in compiled state; **T-I** – idle UDP Flow expires after the configured time. |
 | **R-047** | G | N | M | Performance | On the reference platform (C-003), the system shall forward at least **1 Mpps** of accepted 64-byte UDP packets per CPU core with 1 000 Policies configured. | **T-P** – TRex/pktgen, 1 000 Policies, measured throughput ≥ target. *(Target value to be agreed.)* |
 | **R-048** | G | N | M | Performance | The system shall support at least **1 000 000** concurrent Flows and **4 096** Policies without degradation of R-047 by more than 20%. | **T-P** – fill conntrack to the limit; re-run R-047. *(Values to be agreed.)* |
 | **R-049** | G | N | M | Performance | The additional forwarding latency introduced by the Data Plane shall be below **50 µs** at the 99th percentile under 50% of the R-047 load. | **T-P** – hardware timestamping or TRex latency stream. |
-| **R-050** | G | F | S | Interoperability | The system shall forward Traffic Log and Audit Log events to a remote syslog server (RFC 5424 over TLS). | **T-S** – syslog-ng sink in CI receives structured events. |
-| **R-051** | G | F | S | Interoperability | The system shall expose metrics in Prometheus exposition format. | **T-I** – `curl /metrics` parses with the Prometheus client; per-Policy counters present. |
-| **R-052** | G | F | S | Maintainability | The system shall provide a command-line tool `songbird validate <dir>` that validates a Configuration directory against the Schema and exits non-zero on error, usable in CI pipelines independently of the appliance. | **T-U** – corpus test as R-020.2 through the CLI. |
-| **R-053** | G | F | M | Security | Policies shall be able to drop IPv4 packets that are not initial fragments, as a configurable behaviour (default: drop). | **T-I** – fragmented UDP datagram; with default settings non-initial fragments are dropped and counted. *(Resolves `dataplane.md` open question 4.)* |
-| **R-054** | G | F | S | Security | When a Policy change no longer permits an active Flow, the Flow shall be terminated at its next packet. | **T-I** – long-lived TCP Flow; change Policy to drop; next segment is dropped and a `FLOW_END` event with reason `policy-change` is emitted. *(Resolves `dataplane.md` open question 3; FortiGate default behaviour.)* |
-| **R-059** | G | F | S | Interoperability | The system shall synchronise its clock with configured NTP servers and shall be able to act as an NTP server for its networks, as a System Service (R-058). | **T-I** – clock offset below 100 ms from the test NTP server; a client in the LAN netns synchronises with the firewall. *(Proposed in 2.0.3: the schema already has `ntp`, the RA had no requirement.)* |
 
 ---
 
@@ -474,16 +484,14 @@ Listed to make the scope boundary explicit. Each may be reconsidered in a future
 
 | # | Issue | Owner | Proposed resolution |
 |---|---|---|---|
-| 1 | Numeric targets of R-047/R-048/R-049 and the reference platform C-003. | Team | Decide after a first benchmark of the PoC on the intended hardware (ADR-0006, ADR-0007). |
-| 2 | Acceptance of proposed R-045, R-047…R-054 (R-046 and R-055 accepted in 2.0.2). | Team | Review meeting; each proposal accepted/rejected with a one-line rationale in this section. ADR-0004 and ADR-0005 depend on R-054 and R-053. |
+| 1 | Acceptance and numeric targets of R-047/R-048/R-049, and the reference platform C-003. | Team | Deferred on 2026-10-21: decide after a first benchmark of the PoC on the intended hardware (ADR-0006, ADR-0007); the three requirements stay in §7 until then. |
 | 11 | Interpretation of R-020.5 "key not stored alongside data" on hardware without a TPM (ADR-0009). | Team | Kept open: investigate a solution (e.g. key derived from an admin passphrase at boot, or an external key file) before 0.3. |
-| 13 | DHCP server configuration: per Interface or in the System Services section. | `systemServices.dhcp` with one block per Interface (R-017); DHCP may run on any Interface (R-017.5); coherence with DNS/NTP `listenOn` enforced (R-017.6). Decided 2026-10-19. |
-| 14 | Acceptance of R-059 (NTP client and server), proposed in 2.0.3. | Team | Review meeting. |
 
 ### Resolved
 
 | # | Issue | Resolution |
 |---|---|---|
+| 2 | Acceptance of the §7 proposals R-045, R-047…R-054. | Decided 2026-10-21. **R-045** (+ .1, .2), M → §6.2: without stateful filtering the 0.1 scope proves nothing. **R-053**, M → §6.2: needed by 0.1 and by ADR-0005. **R-054**, S → §6.2: needed by ADR-0004. **R-052** → §6.4, **promoted S → M**: in the 0.1 scope and behind its exit criterion on the schema corpus. **R-050**, **R-051**, S → §6.7: useful integrations, not tied to a release. **R-047…R-049** deferred to open issue 1. |
 | 3 | Does C-001 exclude `nf_conntrack`? | Moot: connection tracking is implemented in BPF maps and `nf_conntrack` is not used (ADR-0003). C-001 unchanged. |
 | 4 | Interface/Zone fields set to `any`. | Not allowed; one RuleSet per ordered pair of different Interfaces or Zones (R-014.5). |
 | 5 | Concurrent editing by two administrators. | Optimistic locking on the Configuration revision (R-021.5). |
@@ -493,6 +501,8 @@ Listed to make the scope boundary explicit. Each may be reconsidered in a future
 | 9 | IPv6 requirements lowered from M to S. | Confirmed. Decided 2026-10-19. |
 | 10 | Traffic between members of the same Zone; use of member Interfaces. | Member Interfaces may be used on their own; the more specific RuleSet is evaluated first and the order is shown to the user (R-046.1, R-046.3); R-046.2 applies when no Policy matches; source and destination of a RuleSet always differ (R-014.5). Decided 2026-10-19. |
 | 12 | SNAT to an IP pool. | Added as R-002.1 and R-002.2. Decided 2026-10-19. |
+| 13 | DHCP server configuration: per Interface or in the System Services section. | `systemServices.dhcp` with one block per Interface (R-017); DHCP may run on any Interface (R-017.5); coherence with DNS/NTP `listenOn` enforced (R-017.6). Decided 2026-10-19. |
+| 14 | Acceptance of R-059 (NTP client and server), proposed in 2.0.3. | Accepted as S → §6.3: the schema already has `systemServices.ntp` and R-058 names the NTP server. Decided 2026-10-21. |
 
 ---
 
@@ -514,6 +524,7 @@ Every reviewed version is kept as a Git tag. Versions up to 2.0.2 are tagged in 
 | 2.0.0-draft | 2026-10-17 | Hermes (for Agos review) | Stable identifiers; glossary, stakeholders, constraints, verification column, exclusions, traceability table; 4 duplicate/inconsistent IDs fixed; 3 parent/child priority violations fixed; 10 proposed additions; 5 open issues. |
 | 2.0.1-draft | 2026-10-17 | Hermes (for Agos review) | Added R-055/.1/.2 (Colour palette with meaning) and the *Colour* glossary entry, traced from the `Color` kind decision in `songbird-yaml-schema`. |
 | 2.0.2-draft | 2026-10-18 | Claude (for team review) | Aligned with the architecture (domain model v0.6, ADR-0001…0010) and with the schema on colors, NAT and names. Glossary: *RuleSet* added, *Zone*, *Policy*, *Default Deny*, *SNAT*, *DNAT* updated, *Virtual IP* removed, *Colour* renamed *Color*. R-003, R-014, R-020.4, R-033 reworded. New: R-001.5 (static routes with distance and priority), R-009.2 (disable a Policy), R-014.5 (RuleSet), R-021.5 (concurrent edits), R-056 (management access per Interface), R-057 (interim IPv6 drop), W-007 (intra-interface Policies, hairpin NAT). R-046 (+ R-046.1, R-046.2) and R-055 family accepted. IPv6 requirements lowered from M to S (to be confirmed). Open issues 3–5 resolved; 6–12 added. |
+| 2.0.6-draft | 2026-10-21 | Claude (for team review) | §7 proposals decided (open issues 2 and 14 resolved). Accepted and moved to §6: R-045, R-045.1, R-045.2, R-053, R-054 (§6.2), R-059 (§6.3), R-052 promoted S → M (§6.4), R-050, R-051 (§6.7). R-047…R-049 deferred until the benchmark (open issue 1). R-058 no longer conditional on R-059. Open issue 13 moved to *Resolved*. |
 | 2.0.5-draft | 2026-10-19 | Hermes (for team review) | Schema open questions closed by the team: DHCP in `systemServices.dhcp` (R-017 reworded, new R-017.6 coherence rule, open issue 13 resolved); one object per file on export, any layout on import (new R-020.7); palette of 16 Colours (R-055.1); empty RuleSet allowed; no source port on Services. |
 | 2.0.4-draft | 2026-10-19 | Hermes (for team review) | Follow-up of the 2026-10-19 decisions. Glossary: *Interface* (no role), *System Service* (`systemServices` / `listenOn`), *Management Service* (closed list incl. SSH). R-056 and R-058 reworded; new R-017.5 (DHCP on any Interface). Open issue 13 extended with the DHCP→DNS/NTP coherence rule. Schema aligned in the same change: `allowAccess` enum, `role` removed, `systemServices.listenOn`, flat groups, `any`/`any6`/Service `any` as predefined objects, `all` no longer reserved. |
 | 2.0.3-draft | 2026-10-19 | Claude (for team review) | Team decisions of 2026-10-19. Glossary: *Zone*, *RuleSet*, *Address*, *Address Group*, *Service*, *Service Group*, *Default Deny* updated; *System Service* and *Management Service* added. R-010, R-011, R-012, R-013 rewritten, R-010.1 added (flat groups, multi-protocol Service, FQDN and MAC, /32 for hosts); R-014.5, R-046.1, R-046.2, R-017.4, R-031, R-031.1, R-056 reworded. New: R-002.1, R-002.2 (SNAT pool), R-012.1–R-012.5, R-046.3 (RuleSet evaluation order shown to the user), R-058 (listening Interfaces of System Services); proposed R-059 (NTP). Open issues 6–10 and 12 resolved; 11 kept open; 13 and 14 added. Moved to the `songbird-fw` monorepo. |
