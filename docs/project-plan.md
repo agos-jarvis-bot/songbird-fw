@@ -3,9 +3,9 @@
 | | |
 |---|---|
 | **Document** | PP – Project Plan |
-| **Version** | 0.2.1-draft |
+| **Version** | 0.2.2-draft |
 | **Status** | Draft for team decision |
-| **Inputs** | RA v2.0.6, architecture docs (domain model v0.7), ADR-0001…0010 and ADR-0014, YAML schema v1alpha1, prototypes |
+| **Inputs** | RA v2.0.6, architecture docs (domain model v0.7), ADR-0001…0018, YAML schema v1alpha1, prototypes |
 | **Outputs** | Release scope, milestones, work breakdown, risk register, process rules |
 
 > Items marked **⟨decide⟩** need a team decision before the plan is baselined. Items marked **⟨fill⟩** need numbers only the team has (availability, dates).
@@ -166,7 +166,7 @@ Milestones are gates, each with a deliverable that is reviewed in a PR. Estimate
 
 ## 5. Architecture decisions to record before coding (M0)
 
-`adr/` holds ADR-0001…0010 and ADR-0014. M0 consists of (a) moving the *Proposed* ones to *Accepted* (or revising them), or accepting them as *targets* where a spike or the benchmark must confirm them, and (b) writing the ones still missing.
+`adr/` holds ADR-0001…0018. ADR-0011, 0012 and 0015…0018 were written in M0 (#31, #34); ADR-0013 is written and *Proposed*. M0 consists of moving the remaining *Proposed* ones to *Accepted* (or revising them), or accepting them as *targets* where a spike or the benchmark must confirm them.
 
 | ADR | Decision | Status today | M0 action |
 |---|---|---|---|
@@ -180,10 +180,14 @@ Milestones are gates, each with a deliverable that is reviewed in a PR. Estimate
 | 0008 | Schema versioning, migration, rollback | Proposed | Accept; needed before M1 generates Go types |
 | 0009 | Secrets encryption key protection | Proposed | Accept; implementation deferred to 0.3 |
 | 0010 | DNAT is a section of the Policy, matched before translation | Accepted | — |
-| **0011** | Repository layout: monorepo `songbird-fw` | *to write* | Retroactive: the monorepo is in place (§10) |
-| **0012** | Canonical YAML serialisation and file layout (quoted strings; one object per file vs multi-document) | *to write* | Decide before M1 (`songbird export` output); the export layout is already fixed by RA R-020.7 |
-| **0013** | Minimum kernel and attach method (≥ 6.6 with TCX vs 5.15 LTS with clsact) | *to write* | Decide before M2; interacts with 0007 and spike 7.1 |
+| **0011** | Repository layout: monorepo `songbird-fw` | Accepted (retroactive) | — |
+| **0012** | Canonical YAML serialisation and file layout (quoted strings; one object per file vs multi-document) | Accepted | — |
+| **0013** | Minimum kernel and attach method (≥ 6.6 with TCX vs 5.15 LTS with clsact) | Proposed | Accept before M2, after spike 7.1 confirms the Hadron kernel; interacts with 0007 |
 | **0014** | DHCP and DNS engines: in-process libraries or external daemons | Proposed, question open | Decide before the 0.2 DHCP/DNS work (spike) |
+| 0015 | The Control Plane is written in Go | Accepted (retroactive) | — |
+| 0016 | eBPF programs are managed with cilium/ebpf and generated with bpf2go | Accepted (retroactive) | — |
+| 0017 | Hadron (Kairos) is the appliance operating system | Proposed (verification ongoing) | Accept after spike 7.1 |
+| 0018 | Configuration objects follow the Kubernetes resource shape | Accepted (retroactive) | — |
 
 ## 6. Roles and responsibilities
 
@@ -282,7 +286,7 @@ Benefits: one PR can touch requirement, ADR, schema, code and test together; one
 |---|---|---|---|
 | 2 | Availability: hours/week per person → calendar for §3. | M0 | #36 |
 | 4 | Reference platform (ADR-0007) and numeric performance targets. | M2 → M5 | #7 |
-| 5 | Minimum kernel: 6.6 (TCX, bpf_link for TC) vs 5.15 LTS (clsact fallback) (ADR-0013); Debian 12 ships 6.1, Debian 13 ships 6.12. | M0 | #31 |
+| 5 | Minimum kernel: 6.6 (TCX, bpf_link for TC) vs 5.15 LTS (clsact fallback) (ADR-0013); Debian 12 ships 6.1, Debian 13 ships 6.12. | ADR-0013 written and *Proposed* (6.6 + TCX); closes when it is accepted after spike 7.1. | #31 |
 | 6 | 0.1 packaging target: Debian 13 `.deb` vs tarball + systemd unit only. | M5 | #37 |
 | 7 | CI runner for privileged netns tests: GitHub-hosted with sudo vs self-hosted (Agos' Proxmox). | M1 | #38 |
 | 8 | Management access to the 0.1 appliance without locking out SSH (R-056). | M2 | #41 |
@@ -292,7 +296,7 @@ Benefits: one PR can touch requirement, ADR, schema, code and test together; one
 | # | Decision | Resolution |
 |---|---|---|
 | 1 | Accept RA proposals R-045…R-054 and R-059. | RA 2.0.6 (2026-10-21): R-045, R-050…R-054, R-059 accepted, R-052 promoted to Must; R-047…R-049 deferred until the benchmark (#6). |
-| 3 | Monorepo (ADR-0011). | Implemented: `songbird-fw` imported, old repos archived; ADR-0011 to be written retroactively (#31). |
+| 3 | Monorepo (ADR-0011). | Implemented: `songbird-fw` imported, old repos archived; recorded retroactively in ADR-0011. |
 
 ---
 
@@ -303,3 +307,4 @@ Benefits: one PR can touch requirement, ADR, schema, code and test together; one
 | 0.1.0-draft | 2026-10-19 | Hermes (for Agos review) | Skeleton: roadmap 0.1→1.0, MVP 0.1 scope with in/out rationale and exit criteria, milestones with effort, WBS, ADR list, roles, process, risk register, verification summary, monorepo proposal, open decisions. |
 | 0.2.0-draft | 2026-10-21 | Claude (for team review) | Aligned with RA 2.0.6 (#40). IPv6 (incl. NAT64/DNS64, DHCPv6-PD) moved from 0.2/1.0 to post-1.0 candidates. Must requirements missing from every release assigned: R-001.5, R-002.1, R-010.1, R-012.1, R-012.4, R-020.7, R-046.1, R-056, R-057 to 0.1; R-017.5, R-017.6, R-046.3, R-058 to 0.2; R-012.2, R-012.3 to 1.0. Should items placed: R-002.2, R-046.2 in 0.1, R-059 in 0.2; R-050 and R-012.5 not tied to a release. Counts fixed (0.1 = 41 requirements, 71 Must in the RA). M0 gate no longer requires ADR-0002/0006/0007 to be final; ADR-0010 shown as Accepted; risk R7 cites ADR-0010; monorepo described as done; M3 uses effective Policy lists (DM-42); exit criterion 1 refers to the corpus instead of fixed counts. Open decisions linked to their issues; 1 and 3 resolved. |
 | 0.2.1-draft | 2026-10-21 | Hermes (for team review) | Milestones carry detailed-design deliverables (issue #42): Test Plan v0 + data-plane detailed design at M0, control-plane detailed design at M1, REST API design at M5; "detailed design before code" rule made explicit; totals adjusted. |
+| 0.2.2-draft | 2026-10-23 | Hermes (for team review) | Aligned with the ADRs written in M0: inputs list ADR-0001…0018; §5 table shows ADR-0011/0012 Accepted, ADR-0013 Proposed, ADR-0015…0018 added; open decision #5 points to ADR-0013; decision #3 points to ADR-0011. |

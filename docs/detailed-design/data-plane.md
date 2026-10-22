@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Document** | DD-DP – Data Plane detailed design |
-| **Version** | 0.1.0-draft (milestone M0 deliverable) |
+| **Version** | 0.1.1-draft (milestone M0 deliverable) |
 | **Status** | Draft for team review |
 | **Codes against** | `docs/architecture/dataplane.md` v3.3 (design and rationale — **not** repeated here) |
 | **Decisions** | ADR-0002 (forwarding model), ADR-0003 (own conntrack), ADR-0004 (policy change), ADR-0005 (fragments), ADR-0006 (capacity limits), ADR-0010 (DNAT in Policy) |
@@ -21,25 +21,26 @@ Three BPF programs, two attach families. Tail calls split the XDP path so each p
 
 | Program | Attach | Type | Entry / called |
 |---|---|---|---|
-| `sb_xdp_parse` | XDP, native, every **physical** Interface (never on VLAN sub-devices) | `SEC("xdp")` | Entry point |
+| `sb_xdp_parse` | XDP, native (drv) mode where the driver supports it, automatic fallback to generic (skb) with a logged warning (ADR-0013); every **physical** Interface (never on VLAN sub-devices) | `SEC("xdp")` | Entry point |
 | `sb_xdp_classify` | tail-call slot 1 | xdp | called by `sb_xdp_parse` |
 | `sb_xdp_ct` | tail-call slot 2 | xdp | called by `sb_xdp_parse` (fallback: inline if slots are free) |
-| `sb_tc_in` | TC ingress on every logical Interface (TCX if ADR-0013 picks kernel ≥ 6.6, else clsact) | `SEC("tc")` | Entry point |
+| `sb_tc_in` | TC ingress on every logical Interface (**TCX**, kernel ≥ 6.6, ADR-0013; no clsact path) | `SEC("tc")` | Entry point |
 | `sb_tc_egress` | TC egress on every logical Interface | `SEC("tc")` | Entry point |
 
 **Tail-call map** `tail_calls` (`BPF_MAP_TYPE_PROG_ARRAY`, 4 entries): slot 0 = self (re-attach helper), 1 = classify, 2 = conntrack. A tail call that fails (program not loaded yet) falls through to the inline slow path — the pipeline must work, slower, even with an empty tail-call map. Hot reload (R-036, post-0.1) replaces slot contents with `link.Update()`.
 
-**Context handoff XDP → TC** (dataplane.md §4): metadata via `bpf_xdp_adjust_meta`:
+**Context handoff XDP → TC** (dataplane.md §4): metadata via `bpf_xdp_adjust_meta`. The struct is 32 bytes (a multiple of 4, as `data_meta` requires) and carries everything TC needs, so TC never re-looks-up `dnat_candidates`:
 
 ```c
-struct sb_meta {            // 16 bytes, in xdp_md->data_meta
-    __u16 flow_id_hi;       // hash of the CT key, for TC-side correlation
-    __u16 flow_id_lo;
-    __u16 logical_if;       // ingress logical Interface id
-    __u16 dnat_id;          // 0 = none
-    __u16 flags;            // SB_META_F_DNAT | SB_META_F_REVSNAT | SB_META_F_LOCAL
-    __u16 ruleset_id;       // 0 = none
-    __u32 rule_idx;         // matching Policy in the effective list
+struct sb_meta {            // 32 bytes, in xdp_md->data_meta
+    __u32 flow_id;          //  0: hash of the CT key, for TC-side correlation
+    __u16 logical_if;       //  4: ingress logical Interface id
+    __u16 flags;            //  6: SB_META_F_DNAT | SB_META_F_REVSNAT | SB_META_F_LOCAL
+    __u16 ruleset_id;       //  8: 0 = none
+    __u16 rule_idx;         // 10: matching Policy in the effective list (< MAX_RULES_PER_RULESET)
+    __u16 dnat_id;          // 12: 0 = none (kept for events and counters)
+    __be16 new_port;        // 14: DNAT target port (valid if SB_META_F_DNAT)
+    __u8  new_addr[16];     // 16: DNAT target address, 128-bit form (valid if SB_META_F_DNAT)
 };
 ```
 
@@ -88,34 +89,38 @@ struct ct_key {                     // 40 B
     __u8  proto, pad[3];
 };
 
-struct ct_entry {                   // 100 B
-    __u64 last_seen_ns;
-    __u64 packets, bytes;
-    __u32 rule_idx;
-    __u16 ruleset_id, dnat_id;
-    __u16 flags;                    // DIR_REPLY, SEEN_REPLY, NAT_SNAT, NAT_DNAT, LOCAL
-    __u8  tcp_state;                // §6
-    __u8  version;                  // = 1
-    __u8  nat_addr[16];
-    __be16 nat_port;
-    __u8  pad[46];
-};
+struct ct_entry {                   // 96 B, same fields as dataplane.md §9
+    __u64 last_seen_ns;             //  0
+    __u64 packets, bytes;           //  8, 16  per direction
+    __u32 policy_gen;               // 24  gen_seq that accepted the Flow (ADR-0004)
+    __u16 rule_idx;                 // 28  Policy index within the RuleSet (< 1024)
+    __u16 ruleset_id;               // 30
+    __u16 flags;                    // 32  DIR_REPLY, SEEN_REPLY, NAT_SNAT, NAT_DNAT, LOCAL
+    __u8  tcp_state;                // 34  §6
+    __u8  version;                  // 35  = 1 (was `pad` in dataplane.md)
+    __u16 dnat_id;                  // 36  0 = none
+    __be16 nat_port;                // 38
+    __u8  nat_addr[16];             // 40  translated address applied in TC
+    struct ct_key peer;             // 56  key of the other direction (re-classify / delete both)
+};                                  // 96, no implicit padding
 
-struct flow_event {                 // 64 B, ring buffer record (R-026)
-    __u64 ts_ns;
-    __u8  kind;                     // 1 FLOW_NEW, 2 FLOW_DROP, 3 FLOW_END
-    __u8  proto;
-    __u16 ruleset_id;
-    __u32 rule_idx;
-    __u16 in_if;
-    __u16 reason;                   // §10, only for FLOW_DROP/FLOW_END
-    __u8  saddr[16], daddr[16];
-    __be16 sport, dport;
-    __u64 packets, bytes;           // FLOW_END only
+struct flow_event {                 // 80 B, ring buffer record (R-026)
+    __u64 ts_ns;                    //  0
+    __u32 policy_gen;               //  8  with ruleset_id and rule_idx names the Policy (dataplane.md §11)
+    __u32 rule_idx;                 // 12
+    __u16 ruleset_id;               // 16
+    __u16 in_if;                    // 18
+    __u16 reason;                   // 20  §10, only for FLOW_DROP/FLOW_END
+    __u8  kind;                     // 22  1 FLOW_NEW, 2 FLOW_DROP, 3 FLOW_END
+    __u8  proto;                    // 23
+    __u8  saddr[16], daddr[16];     // 24, 40
+    __be16 sport, dport;            // 56, 58
+    __u8  pad[4];                   // 60  explicit
+    __u64 packets, bytes;           // 64, 72  FLOW_END only
 };
 ```
 
-`ct_entry` is 100 B (8+8+8+4+2+2+2+1+1+16+2+46) — slightly over the 96 B assumed by ADR-0006's memory estimate; the estimate stays on the same order (~350–400 MB for 1 M Flows) and is confirmed by the M5 benchmark. Layout is a contract: the build must emit `offsetof`/size static asserts for every struct in this section (bpf2go catches mismatches).
+`ct_entry` is 96 B, as assumed by ADR-0006's memory estimate (~350–400 MB for 1 M Flows, to be confirmed by the M5 benchmark); `flow_event` is 80 B (8 MiB ring buffer ≈ 100 000 records). Sizes include C alignment: **no struct has implicit padding**. Layout is a contract: the build must emit `_Static_assert(sizeof(...))` and `offsetof` checks for every struct in this section (including `sb_meta` = 32), and the Go side asserts the same sizes on the `bpf2go`-generated types.
 
 ## 4. Constants
 
@@ -151,7 +156,7 @@ The applied state is the content of the GEN maps plus `gen_ctl.active_gen ∈ {0
 3. **Self-check**: for every RuleSet, walk the effective list and verify `rule_names` and `ruleset_meta.n_rules` agree with the compiled bitmaps (cheap, catches compiler bugs before they touch traffic).
 4. Flip `active_gen = g_new` (single `Map.Update` of 4 bytes; `gen_seq++`).
 5. Programs read `active_gen` once per packet into a local; a packet always sees one complete generation.
-6. Mark CT entries created under the old generation stale only lazily: `ct_entry` carries no generation — instead the Applier stores the new `gen_seq`; entries whose `rule_idx` no longer exists in the new generation are re-classified on their next packet (ADR-0004: terminated if no longer permitted, emitting `FLOW_END` with reason `policy-change`).
+6. CT entries are **not** swept. Each `ct_entry` carries `policy_gen` (the `gen_seq` that accepted it, ADR-0004). The Applier bumps `gen_seq` in step 4; the next packet in either direction of a Flow whose `policy_gen != gen_ctl.gen_seq` is re-classified (§6). `rule_idx` alone is **not** a valid staleness test: after a reorder the same index resolves to a different Policy and the Flow would silently stay permitted by the wrong rule.
 7. On any failure in steps 2–3: delete slot `g_new` content, leave `active_gen` untouched, report the error. The previous state is provably intact because nothing shared was written.
 8. After a successful flip, the old generation's maps stay allocated until the next Apply (instant rollback = flip back); the *second* next Apply recreates them.
 
@@ -176,7 +181,7 @@ Timeouts are lazy: `now - last_seen > tmo(state)` during lookup ⇒ treat as new
 
 SYN-flood protection (dataplane.md §9): `ct_syn` is small (65 536) and LRU; a flood evicts only half-open entries. Promotion happens on the first reply, not on the SYN.
 
-Policy change (ADR-0004): an established packet whose `(ruleset_id, rule_idx)` no longer resolves in the active generation is re-classified as a new Flow; if the new verdict is drop → `FLOW_END` reason `policy-change`, entry deleted. This is the only re-classification path; no mass sweep on Apply.
+Policy change (ADR-0004): a packet of a Flow with `policy_gen != gen_seq` has its ORIG tuple re-classified against the active generation. Still accepted → update `policy_gen`, `rule_idx`, `ruleset_id` in both entries (the other one via `peer`) and forward. Not accepted → drop the packet, delete both entries (via `peer`), emit `FLOW_DROP` with reason `policy-change`; `FLOW_END` is never emitted from BPF. This is the only re-classification path; no mass sweep on Apply. Cost: one re-classification per active Flow per Apply.
 
 ## 7. Classifier mechanics
 
@@ -200,7 +205,7 @@ Per-packet cost bound (new Flow, no DNAT): 2 LPM + 1 ARRAY + 1 ARRAY + 1 HASH(ru
 
 ## 8. NAT (M4)
 
-**DNAT** (TC ingress, `sb_tc_in`): if `sb_meta.flags & SB_META_F_DNAT`, rewrite `daddr/dport` from `dnat_candidates[dnat_id]` (value copied into the meta by XDP, so TC does **not** re-lookup) using `bpf_l3_csum_replace`/`bpf_l4_csum_replace`; with checksum offload, mark `skb->ip_summed = CHECKSUM_NONE` only when the packet is not already `CHECKSUM_PARTIAL`. Both offload modes are tested (S6).
+**DNAT** (TC ingress, `sb_tc_in`): if `sb_meta.flags & SB_META_F_DNAT`, rewrite `daddr/dport` from `dnat_candidates[dnat_id]` (`new_addr`/`new_port` are carried in the 32-byte `sb_meta`, so TC does **not** re-lookup) using `bpf_l3_csum_replace`/`bpf_l4_csum_replace`; with checksum offload, mark `skb->ip_summed = CHECKSUM_NONE` only when the packet is not already `CHECKSUM_PARTIAL`. Both offload modes are tested (S6).
 
 **SNAT** (TC egress, `sb_tc_egress`): on the first packet of an accepted Flow flagged `NAT_SNAT` (flag set at classification time from the Policy's `nat` section):
 1. translated source = `ct_entry.nat_addr` (outgoing Interface address when `translateIpTo` is omitted, pool address otherwise — chosen by the Applier at Apply time for pools, by the kernel for the Interface case via a Go-maintained `if_addr` map: `HASH logical_if → {addr[16]}`);
@@ -257,7 +262,7 @@ Every task ends with its suite green on CI-bpf; S3 fuzz may run nightly if over 
 | # | Item | Blocks | Resolution |
 |---|---|---|---|
 | 1 | `rulesets` map inside or outside the GEN scope (§2 \*) | M2-01 | M2-01 decides, one ADR line if it contradicts dataplane.md |
-| 2 | TCX vs clsact attach | M2-01 | ADR-0013 (kernel floor) |
+| 2 | TCX vs clsact attach | — | Resolved by ADR-0013 (TCX, kernel ≥ 6.6); pending its acceptance and spike 7.1 |
 | 3 | PPPoE: does XDP metadata survive to TC on `ppp0`? | WAN on FTTH | spike 7.2; fallback: re-lookup in TC |
 | 4 | Exact `ct_entry` layout (§3 note) | M2-01 | static asserts are the contract |
 
@@ -268,3 +273,4 @@ Every task ends with its suite green on CI-bpf; S3 fuzz may run nightly if over 
 | Version | Date | Author | Summary |
 |---|---|---|---|
 | 0.1.0-draft | 2026-10-21 | Hermes (for team review) | v0 for M0: program/map inventory, wire structs, constants, generation-swap protocol, CT FSM, classifier mechanics, NAT detail, events and rate limiting, drop-reason enum, M2/M4 task breakdown mapped to Test Plan suites. |
+| 0.1.1-draft | 2026-10-23 | Hermes (for team review) | Review fixes: `ct_entry` realigned to dataplane.md §9 (adds `policy_gen` and `peer`, 96 B, no implicit padding); `flow_event` 80 B with `policy_gen`; `sb_meta` widened to 32 B to carry the DNAT target; staleness test uses `policy_gen`, not `rule_idx` (ADR-0004); attach choice aligned with ADR-0013. |

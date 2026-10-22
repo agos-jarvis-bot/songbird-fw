@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Document** | TP – Test Plan |
-| **Version** | 0.1.0-draft (v0, milestone M0) |
+| **Version** | 0.1.1-draft (v0, milestone M0) |
 | **Status** | Draft for team review |
 | **Inputs** | RA (`docs/requirements-analysis.md`, verification column), Project Plan §9, `docs/architecture/dataplane.md`, `schema/` corpus |
 | **Maintained** | This document starts at M0 and is updated in the same milestone that adds a behaviour (Project Plan §9). The matrix never lags the code. |
@@ -56,6 +56,7 @@ Every test case has a stable identifier, used in code annotations, the traceabil
 | PARSE | Data-plane parser |
 | CLASS | Classifier / RuleSet evaluation |
 | CT | Connection tracking |
+| FWD | Forwarding and filtering across Interfaces (stateful TCP/UDP/ICMP, VLAN, PMTUD) |
 | NAT | SNAT/DNAT (TC) |
 | EVENT | Events, traffic log, counters |
 | CFG | Loader, compiler, apply, rollback |
@@ -86,7 +87,7 @@ The matrix is **generated**, never edited by hand: a CI job (`matrix`) scans the
 | `uncovered` | no test annotated | **Release blocker for Must requirements at 1.0**; for 0.1, the 0.1-scope Must set (Project Plan §2.2) must be fully covered at M5 |
 | `withdrawn` | requirement withdrawn from the RA | Kept for history |
 
-The matrix job fails the pipeline if a Must requirement in the current release scope becomes `uncovered` or `red` on `main`.
+**Enforcement ramps with the milestones.** `red` fails the pipeline from the moment the matrix job exists (M1). `uncovered` for a Must requirement in the current release scope is *reported* only until M5, and is blocking on `main` and on the release tag from M5 onwards (Project Plan §2.2); before that, a requirement whose milestone has been delivered must not be `uncovered` (checked at each milestone gate).
 
 ---
 
@@ -99,7 +100,7 @@ The matrix job fails the pipeline if a Must requirement in the current release s
 | **Bench** | Reference platform (C-003): bare metal or pinned VM, TRex/pktgen, kernel per ADR-0013 | L4 | Pending ADR-0007/0013; needed by M5 |
 | **VM lab** | Packer-built VM of the appliance image; Playwright | L3 | 0.3 |
 
-Environment prerequisites are code: a `test/env` check runs first in every job and fails fast with the missing capability named (kernel version, CAP_BPF, `iproute2`, TRex).
+Environment prerequisites are code: a `test/env` check runs first in every job and fails fast with the missing capability named (kernel version ≥ 6.6 per ADR-0013, CAP_BPF, `iproute2`, TRex).
 
 ---
 
@@ -178,3 +179,4 @@ The person who ships a feature writes its tests; the other person reviews both. 
 | Version | Date | Author | Summary |
 |---|---|---|---|
 | 0.1.0-draft | 2026-10-21 | Hermes (for team review) | v0 for milestone M0: levels, test-ID convention, traceability matrix, environments, 0.1 suites S1–S8, entry/exit criteria, defect rules, calendar. |
+| 0.1.1-draft | 2026-10-23 | Hermes (for team review) | Review fixes: added the FWD area (used by suite S5); matrix enforcement now ramps (red from M1, uncovered Must blocking from M5), removing the contradiction with the M1 "mostly uncovered" state; `test/env` kernel floor tied to ADR-0013. |
