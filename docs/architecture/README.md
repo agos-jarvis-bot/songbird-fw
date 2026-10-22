@@ -11,7 +11,7 @@ Architectural design of Songbird. Requirements live in [`docs/requirements-analy
 | [reconciliation.md](reconciliation.md) | Reconciliation loop: desired state → validate → compile → apply → observe → status |
 | [dataplane.md](dataplane.md) | eBPF Data Plane design |
 | [high-lvl-architecture.md](../legacy/high-lvl-architecture.md) | First high-level sketch (superseded by `components.md`) |
-| Deployment view | *To be written* |
+| [deployment.md](deployment.md) | Deployment view for 0.1 (Debian 13 VM; Hadron image deferred to 0.3, ADR-0017) |
 
 ## Architecture Decision Records
 
