@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Document** | PP – Project Plan |
-| **Version** | 0.2.0-draft |
+| **Version** | 0.2.1-draft |
 | **Status** | Draft for team decision |
 | **Inputs** | RA v2.0.6, architecture docs (domain model v0.7), ADR-0001…0010 and ADR-0014, YAML schema v1alpha1, prototypes |
 | **Outputs** | Release scope, milestones, work breakdown, risk register, process rules |
@@ -105,13 +105,15 @@ Milestones are gates, each with a deliverable that is reviewed in a PR. Estimate
 
 | # | Milestone | Deliverables | Exit gate | Effort (pd) |
 |---|---|---|---|---|
-| **M0** | **Plan & architecture baseline** | This plan approved; the *Proposed* ADRs needed by 0.1 moved to *Accepted* (or revised), ADR-0002, 0006 and 0007 accepted as *targets* (§5); ADR-0011 and ADR-0013 written (§5); RA proposals decided (done in RA 2.0.6); deployment view added to the architecture docs; monorepo import merged (done). | Every ADR of §5 marked for M0 is accepted, or accepted as a target where it waits for a spike or the benchmark; architecture reviewed by both team members. | 4–6 |
-| **M1** | **Schema & validator** | `songbird validate` in Go (JSON Schema layer via `santhosh-tekuri/jsonschema`, semantic layer ported from `validate.py`); example corpus as test suite; Go types generated from the schema; CI pipeline (lint, unit tests, corpus). | Exit criterion 1. | 6–8 |
+| **M0** | **Plan & architecture baseline** | This plan approved; the *Proposed* ADRs needed by 0.1 moved to *Accepted* (or revised), ADR-0002, 0006 and 0007 accepted as *targets* (§5); ADR-0011 and ADR-0013 written (§5); RA proposals decided (done in RA 2.0.6); deployment view added to the architecture docs; monorepo import merged (done); **Test Plan v0** (§9: methods, infrastructure, environments, traceability-matrix format and test-ID convention); **data-plane detailed design** (detailed design of WBS 3: BPF map layouts with key/value structs, program structure and tail-call boundaries, generation-swap protocol) — the document M2 codes against. | Every ADR of §5 marked for M0 is accepted, or accepted as a target where it waits for a spike or the benchmark; architecture, Test Plan v0 and data-plane detailed design reviewed by both team members. | 5–7 |
+| **M1** | **Schema & validator** | `songbird validate` in Go (JSON Schema layer via `santhosh-tekuri/jsonschema`, semantic layer ported from `validate.py`); example corpus as test suite; Go types generated from the schema; CI pipeline (lint, unit tests, corpus); **control-plane detailed design** (detailed design of WBS 2 and 4: Go package layout, loader/compiler/applier interfaces with signatures, reconciliation states and error model) — the document M3 codes against. | Exit criterion 1; control-plane detailed design merged. | 8–10 |
 | **M2** | **Data-plane core** | `bpf2go` project skeleton; parser (L2/VLAN/IPv4 with IHL/fragments, 128-bit address normalisation); bit-vector classifier with two-generation maps; own conntrack with SYN-separate map, RELATED, timeouts, sweep; ring-buffer events; `PROG_TEST_RUN` unit tests; fuzz equivalence against the Go reference classifier. | Exit criteria 2 (filtering part), 6. | 20–28 |
 | **M3** | **Control-plane core** | Loader/compiler: YAML → object graph → map contents (LPM tries, port classes, effective Policy list per ordered pair of Interfaces, DM-42); netlink application of interfaces/VLANs/addresses/routes (distance and priority, R-001.5); atomic apply with generation swap and rollback; pinned maps and re-attach; event consumer writing JSON-lines; `songbird apply`, `songbird status`, `songbird export`. | Exit criteria 4, 5. | 14–18 |
 | **M4** | **NAT in TC** | DNAT (pre-translation match, rewrite in TC ingress), SNAT masquerade and pool with port allocation (TC egress), reverse translations via conntrack, checksum handling; integration tests with real traffic. | Exit criterion 3. | 10–14 |
-| **M5** | **Integration, benchmark, release** | netns integration suite in CI; benchmark harness (pktgen/TRex) and report; reference platform chosen (C-003) and target numbers proposed for RA R-047…R-049; packaging (`.deb` + systemd unit); user guide for the CLI; 0.1 tag. | Exit criterion 7; all 7 criteria green. | 8–10 |
-| | **Total 0.1** | | | **62–84 pd** |
+| **M5** | **Integration, benchmark, release** | netns integration suite in CI; benchmark harness (pktgen/TRex) and report; reference platform chosen (C-003) and target numbers proposed for RA R-047…R-049; packaging (`.deb` + systemd unit); user guide for the CLI; **REST API design** (OpenAPI draft for the UI of 0.2, routes and models already sketched in the PoC feasibility study); 0.1 tag. | Exit criterion 7; all 7 criteria green. | 10–12 |
+| | **Total 0.1** | | | **66–88 pd** |
+
+**Detailed design before code.** Every WBS branch that produces code is preceded by a detailed-design document written in an earlier milestone: data plane (WBS 3) at M0, control plane (WBS 2, 4) at M1, REST API at M5 for the 0.2 UI. The Test Plan starts as v0 at M0 and is updated at every release; no implementation work starts before its document is merged and reviewed by both team members.
 
 **Parallelism**: M1 and M2 start together (one person each); M3 depends on M1 and on M2's map layout; M4 depends on M2+M3; M5 integrates. Critical path: M0 → M2 → M4 → M5.
 
@@ -239,7 +241,7 @@ Scored Probability × Impact, 1–3 each. Reviewed at every milestone gate.
 
 ## 9. Verification strategy (summary — the Test Plan is a separate document)
 
-The RA's verification column already assigns each requirement a method. The Test Plan will contain, per method:
+The Test Plan is produced as **v0 at M0** (methods below, infrastructure, environments, the traceability-matrix format and the test-ID convention) and updated at every release: new test cases are added in the same milestone that adds the behaviour, so the matrix never lags the code. The RA's verification column already assigns each requirement a method. The Test Plan will contain, per method:
 
 | Method | Infrastructure | Lives in |
 |---|---|---|
@@ -300,3 +302,4 @@ Benefits: one PR can touch requirement, ADR, schema, code and test together; one
 |---|---|---|---|
 | 0.1.0-draft | 2026-10-19 | Hermes (for Agos review) | Skeleton: roadmap 0.1→1.0, MVP 0.1 scope with in/out rationale and exit criteria, milestones with effort, WBS, ADR list, roles, process, risk register, verification summary, monorepo proposal, open decisions. |
 | 0.2.0-draft | 2026-10-21 | Claude (for team review) | Aligned with RA 2.0.6 (#40). IPv6 (incl. NAT64/DNS64, DHCPv6-PD) moved from 0.2/1.0 to post-1.0 candidates. Must requirements missing from every release assigned: R-001.5, R-002.1, R-010.1, R-012.1, R-012.4, R-020.7, R-046.1, R-056, R-057 to 0.1; R-017.5, R-017.6, R-046.3, R-058 to 0.2; R-012.2, R-012.3 to 1.0. Should items placed: R-002.2, R-046.2 in 0.1, R-059 in 0.2; R-050 and R-012.5 not tied to a release. Counts fixed (0.1 = 41 requirements, 71 Must in the RA). M0 gate no longer requires ADR-0002/0006/0007 to be final; ADR-0010 shown as Accepted; risk R7 cites ADR-0010; monorepo described as done; M3 uses effective Policy lists (DM-42); exit criterion 1 refers to the corpus instead of fixed counts. Open decisions linked to their issues; 1 and 3 resolved. |
+| 0.2.1-draft | 2026-10-21 | Hermes (for team review) | Milestones carry detailed-design deliverables (issue #42): Test Plan v0 + data-plane detailed design at M0, control-plane detailed design at M1, REST API design at M5; "detailed design before code" rule made explicit; totals adjusted. |
