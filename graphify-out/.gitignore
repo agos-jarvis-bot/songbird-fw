@@ -1,0 +1,4 @@
+# Machine-local graphify state (per-developer, not shared)
+cache/
+.graphify_python
+.graphify_root
