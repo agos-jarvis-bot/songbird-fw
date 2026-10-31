@@ -1,0 +1,206 @@
+{
+  "schema/validate.py": {
+    "mtime": 1793463265.039426,
+    "seen": 1793464320.952428,
+    "ast_hash": "668e3cf88c3baf739d9a02e05ad61d9e",
+    "semantic_hash": "668e3cf88c3baf739d9a02e05ad61d9e"
+  },
+  "README.md": {
+    "mtime": 1792413435.2976515,
+    "seen": 1793464320.9524355,
+    "ast_hash": "ac41fafe4a6fe5ae94dafa18900d55a3",
+    "semantic_hash": "ac41fafe4a6fe5ae94dafa18900d55a3"
+  },
+  "adr/0000-template.md": {
+    "mtime": 1792413435.2926514,
+    "seen": 1793464320.9524386,
+    "ast_hash": "0687ccf359e24baeeef05e55a622c14c",
+    "semantic_hash": "0687ccf359e24baeeef05e55a622c14c"
+  },
+  "adr/0001-yaml-in-git-source-of-truth.md": {
+    "mtime": 1792413107.553978,
+    "seen": 1793464320.9524403,
+    "ast_hash": "fc15aec1af4878313b1bae17046c7bf6",
+    "semantic_hash": "fc15aec1af4878313b1bae17046c7bf6"
+  },
+  "adr/0002-forwarding-model.md": {
+    "mtime": 1792413107.5548074,
+    "seen": 1793464320.952442,
+    "ast_hash": "4d43c2732f7ed4bfb57485c8c46c4013",
+    "semantic_hash": "4d43c2732f7ed4bfb57485c8c46c4013"
+  },
+  "adr/0003-own-conntrack.md": {
+    "mtime": 1792413107.5548074,
+    "seen": 1793464320.9524431,
+    "ast_hash": "3e19652d8ebbd0b14ee1c82a36b00506",
+    "semantic_hash": "3e19652d8ebbd0b14ee1c82a36b00506"
+  },
+  "adr/0004-active-flows-on-policy-change.md": {
+    "mtime": 1792704654.1431465,
+    "seen": 1793464320.9524446,
+    "ast_hash": "186fa9b5f1097e0fbc1b5f6194904d9e",
+    "semantic_hash": "186fa9b5f1097e0fbc1b5f6194904d9e"
+  },
+  "adr/0005-ipv4-fragments.md": {
+    "mtime": 1792704654.1431465,
+    "seen": 1793464320.9524457,
+    "ast_hash": "50b039769cdeb207247ed63258fcc21e",
+    "semantic_hash": "50b039769cdeb207247ed63258fcc21e"
+  },
+  "adr/0006-capacity-limits.md": {
+    "mtime": 1792413107.5548074,
+    "seen": 1793464320.952447,
+    "ast_hash": "131fe35ae4aac7ad7822467a2de61ea4",
+    "semantic_hash": "131fe35ae4aac7ad7822467a2de61ea4"
+  },
+  "adr/0007-reference-platform.md": {
+    "mtime": 1792413107.5548074,
+    "seen": 1793464320.9524484,
+    "ast_hash": "9464516bf4c11f2942782ec7aca0d180",
+    "semantic_hash": "9464516bf4c11f2942782ec7aca0d180"
+  },
+  "adr/0008-schema-versioning-and-rollback.md": {
+    "mtime": 1792413107.5548074,
+    "seen": 1793464320.9524498,
+    "ast_hash": "9d987fbeac3b1c6cb47face84cdc437b",
+    "semantic_hash": "9d987fbeac3b1c6cb47face84cdc437b"
+  },
+  "adr/0009-secrets-encryption-key.md": {
+    "mtime": 1792413107.554978,
+    "seen": 1793464320.9524512,
+    "ast_hash": "b9ad4e8619d07fe764d167a1e8537bf1",
+    "semantic_hash": "b9ad4e8619d07fe764d167a1e8537bf1"
+  },
+  "adr/0010-dnat-in-policy.md": {
+    "mtime": 1792413107.554978,
+    "seen": 1793464320.9524527,
+    "ast_hash": "f0222e4272b722332552387ece102335",
+    "semantic_hash": "f0222e4272b722332552387ece102335"
+  },
+  "adr/0011-monorepo.md": {
+    "mtime": 1792705783.263575,
+    "seen": 1793464320.9524539,
+    "ast_hash": "8dc896c759a441f07050273db12db74c",
+    "semantic_hash": "8dc896c759a441f07050273db12db74c"
+  },
+  "adr/0012-canonical-yaml-serialisation.md": {
+    "mtime": 1792705783.276106,
+    "seen": 1793464320.9524548,
+    "ast_hash": "54373af4a9da1490ef53ce3d6533e235",
+    "semantic_hash": "54373af4a9da1490ef53ce3d6533e235"
+  },
+  "adr/0013-minimum-kernel-and-attach-method.md": {
+    "mtime": 1792705783.285112,
+    "seen": 1793464320.9524562,
+    "ast_hash": "1f615bda0f10a67cf6c966d667fa0f7d",
+    "semantic_hash": "1f615bda0f10a67cf6c966d667fa0f7d"
+  },
+  "adr/0014-dhcp-and-dns-engines.md": {
+    "mtime": 1792421005.1330936,
+    "seen": 1793464320.9524577,
+    "ast_hash": "202d2ff1e4f00cc81cf594c1963b084e",
+    "semantic_hash": "202d2ff1e4f00cc81cf594c1963b084e"
+  },
+  "adr/0015-go-for-the-control-plane.md": {
+    "mtime": 1792705817.8271408,
+    "seen": 1793464320.9524589,
+    "ast_hash": "2eb6f2dce9c0bf25dc24debbf0d33513",
+    "semantic_hash": "2eb6f2dce9c0bf25dc24debbf0d33513"
+  },
+  "adr/0016-cilium-ebpf-library.md": {
+    "mtime": 1792705817.816314,
+    "seen": 1793464320.95246,
+    "ast_hash": "1af1db6d7e03d4823168f0282a6626d8",
+    "semantic_hash": "1af1db6d7e03d4823168f0282a6626d8"
+  },
+  "adr/0017-hadron-as-the-appliance-os.md": {
+    "mtime": 1792705817.8276231,
+    "seen": 1793464320.9524615,
+    "ast_hash": "4f8a6f02943ad26e336d445d03404834",
+    "semantic_hash": "4f8a6f02943ad26e336d445d03404834"
+  },
+  "adr/0018-crd-style-configuration-objects.md": {
+    "mtime": 1792705817.8398225,
+    "seen": 1793464320.9524627,
+    "ast_hash": "3ddbfa3c0cd557db503bbaa388109794",
+    "semantic_hash": "3ddbfa3c0cd557db503bbaa388109794"
+  },
+  "docs/architecture/README.md": {
+    "mtime": 1792708526.9690795,
+    "seen": 1793464320.9524639,
+    "ast_hash": "37911b34a15e07beffbe92bc17f2bb79",
+    "semantic_hash": "37911b34a15e07beffbe92bc17f2bb79"
+  },
+  "docs/architecture/components.md": {
+    "mtime": 1792704654.1431465,
+    "seen": 1793464320.9524653,
+    "ast_hash": "c44d3e8c480d4545be01d4946c201209",
+    "semantic_hash": "c44d3e8c480d4545be01d4946c201209"
+  },
+  "docs/architecture/dataplane.md": {
+    "mtime": 1792704654.1431465,
+    "seen": 1793464320.9524667,
+    "ast_hash": "0a68c2b100e07253cfef9140258989c9",
+    "semantic_hash": "0a68c2b100e07253cfef9140258989c9"
+  },
+  "docs/architecture/deployment.md": {
+    "mtime": 1792708509.0333748,
+    "seen": 1793464320.952468,
+    "ast_hash": "35705817c49d8b5fbfd9df31ba95ac61",
+    "semantic_hash": "35705817c49d8b5fbfd9df31ba95ac61"
+  },
+  "docs/architecture/domain-model.md": {
+    "mtime": 1792704654.1441464,
+    "seen": 1793464320.9524727,
+    "ast_hash": "7b792bd1eaf02d12b19d1db73b540091",
+    "semantic_hash": "7b792bd1eaf02d12b19d1db73b540091"
+  },
+  "docs/architecture/reconciliation.md": {
+    "mtime": 1792413107.5559778,
+    "seen": 1793464320.9524739,
+    "ast_hash": "4e298e030bb7778f1d1b66823d1583ab",
+    "semantic_hash": "4e298e030bb7778f1d1b66823d1583ab"
+  },
+  "docs/detailed-design/data-plane.md": {
+    "mtime": 1793463196.0637136,
+    "seen": 1793464320.952475,
+    "ast_hash": "e048e0effbb34e72016c8ea14337a95b",
+    "semantic_hash": "e048e0effbb34e72016c8ea14337a95b"
+  },
+  "docs/legacy/high-lvl-architecture.md": {
+    "mtime": 1792413107.5559778,
+    "seen": 1793464320.9524765,
+    "ast_hash": "fdacb5bb225595d8d16d93bbf3d46cfe",
+    "semantic_hash": "fdacb5bb225595d8d16d93bbf3d46cfe"
+  },
+  "docs/project-plan.md": {
+    "mtime": 1793463196.0637136,
+    "seen": 1793464320.9524775,
+    "ast_hash": "22a9d6027ae68ae6dd6d42b6efc6a41b",
+    "semantic_hash": "22a9d6027ae68ae6dd6d42b6efc6a41b"
+  },
+  "docs/requirements-analysis.md": {
+    "mtime": 1792704654.1441464,
+    "seen": 1793464320.9524786,
+    "ast_hash": "54045c04e939bd81a1cdf363e35a982e",
+    "semantic_hash": "54045c04e939bd81a1cdf363e35a982e"
+  },
+  "docs/test-plan.md": {
+    "mtime": 1793463196.0637136,
+    "seen": 1793464320.952481,
+    "ast_hash": "42c3f8fcfda62be9117981d795e5699e",
+    "semantic_hash": "42c3f8fcfda62be9117981d795e5699e"
+  },
+  "schema/README.md": {
+    "mtime": 1792426610.5290096,
+    "seen": 1793464320.9524825,
+    "ast_hash": "1200f1c2578ebbe7b0440fa6d777e7a7",
+    "semantic_hash": "1200f1c2578ebbe7b0440fa6d777e7a7"
+  },
+  "schema/requirements.txt": {
+    "mtime": 1793463265.039426,
+    "seen": 1793464320.952484,
+    "ast_hash": "254871f79cea0b4c7101baee1ca9871a",
+    "semantic_hash": "254871f79cea0b4c7101baee1ca9871a"
+  }
+}
